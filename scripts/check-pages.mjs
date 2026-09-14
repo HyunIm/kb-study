@@ -53,3 +53,13 @@ const perfect=rr({action:'start',mode:'free',qid:first.id});rr({action:'answer',
 assert.throws(()=>rr({action:'start',mode:'free',retryOf:perfect.id}));
 assert.throws(()=>rr({action:'start',mode:'free',retryOf:'unknown'}));
 console.log('PASS: exact wrong/unanswered retry, fresh hidden answers, original result/progress preservation, all-correct and unfinished rejection, backup compatibility');
+
+const {choiceText}=await import('../pages/text-layout.mjs');
+assert.equal(choiceText('경우에는 거래가\n제한된다.'),'경우에는 거래가 제한된다.');
+assert.equal(choiceText('징구하여야\r\n한다.'),'징구하여야 한다.');
+assert.equal(choiceText('ㄱ. 첫 문장\n이어지는 문장\nㄴ. 다음 항목'),'ㄱ. 첫 문장 이어지는 문장\nㄴ. 다음 항목');
+assert.equal(choiceText('첫 문단\n\n둘째 문단'),'첫 문단\n\n둘째 문단');
+const rawChoice=book.questions[0].choices[0].content[0].text;
+assert.ok(rawChoice.includes('거래가\n제한된다.'));
+assert.ok(choiceText(rawChoice).includes('거래가 제한된다.'));
+console.log('PASS: choice PDF line reflow, paragraph/list preservation, original data unchanged');
