@@ -16,7 +16,8 @@ export function createEngine(book) {
   if(!input){if(id){const s=state.sessions.find(s=>s.id===id);if(!s)throw Error('이 기기에서 학습 기록을 찾을 수 없습니다.');return payload(s,now);}return {authMode:'local',catalog,progress:state.progress,sessions:[...state.sessions].sort((a,b)=>b.created-a.created).map(s=>({id:s.id,mode:s.mode,status:s.status,count:s.ids.length,created:s.created,answered:Object.keys(s.answers).length,score:s.status==='complete'?score(s):null}))};}
   if(input.action==='start'){
    const mode=['daily','free','review','exam'].includes(input.mode)?input.mode:'daily';let ids;
-   if(mode==='exam')ids=examIds();else if(input.qid&&byId.has(input.qid))ids=[input.qid];else{
+   if(input.retryOf){const prior=state.sessions.find(s=>s.id===input.retryOf);if(!prior||prior.status!=='complete'||mode!=='free')throw Error('완료된 학습에서만 오답을 다시 풀 수 있습니다.');ids=prior.ids.filter(id=>prior.answers[id]?.label!==byId.get(id).answer?.labels?.[0]);}
+   else if(mode==='exam')ids=examIds();else if(input.qid&&byId.has(input.qid))ids=[input.qid];else{
     const map=new Map(state.progress.map(p=>[p.qid,p]));let pool=bank.filter(q=>(!input.chapter||q.chapter.number===Number(input.chapter))&&(!input.section||q.section?.id===input.section));
     if(input.search){const query=String(input.search).toLowerCase().slice(0,200);const matches=new Set(catalog.filter(q=>[q.title,q.number,...q.pages,q.chapter.title,q.section?.title||''].join(' ').toLowerCase().includes(query)).map(q=>q.id));pool=pool.filter(q=>matches.has(q.id));}
     if(mode==='review'){pool=pool.filter(q=>{const p=map.get(q.id);return p&&(input.filter==='bookmark'?p.bookmark:input.filter==='wrong'?p.total&&!p.last_correct:input.filter==='unsure'?p.unsure:p.total&&p.due<=now);}).sort((a,b)=>(map.get(a.id)?.due||0)-(map.get(b.id)?.due||0));}

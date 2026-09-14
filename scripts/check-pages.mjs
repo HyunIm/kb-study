@@ -36,3 +36,20 @@ assert.throws(()=>reload.restore({...backup,version:'wrong'}));assert.deepEqual(
 const independent=createStore(engine,new IDBFactory());assert.equal((await independent.snapshot()).sessions.length,0);
 await assert.rejects(()=>createStore(engine,null).snapshot());
 console.log('PASS: 750 questions, 13 chapter counts, original answers/printed pages, grading once, review/bookmark, 50-question exam/60-minute expiry, reload persistence, two-tab atomicity, backup round-trip, invalid backup preservation, independent device storage');
+// Retry uses only this completed session, including unanswered questions.
+const retryState=engine.blank();const rr=cmd=>engine.run(retryState,cmd,null,now);
+const original=rr({action:'start',mode:'free',count:5});
+const first=book.questions.find(q=>q.id===original.ids[0]);
+rr({action:'answer',session:original.id,qid:first.id,label:first.answer.labels[0],unsure:false});
+assert.throws(()=>rr({action:'start',mode:'free',retryOf:original.id}));
+rr({action:'finish',session:original.id});
+const storedResult=JSON.stringify(retryState.sessions[0]), storedProgress=JSON.stringify(retryState.progress);
+const retry=rr({action:'start',mode:'free',retryOf:original.id,count:10,chapter:13});
+assert.deepEqual(retry.ids,original.ids.slice(1));assert.notEqual(retry.id,original.id);
+assert.equal(retry.ids.length,4);assert.ok(retry.questions.every(q=>!q.answer));assert.deepEqual(retry.answers,{});
+assert.equal(JSON.stringify(retryState.sessions[0]),storedResult);assert.equal(JSON.stringify(retryState.progress),storedProgress);
+assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(retryState))),retryState);
+const perfect=rr({action:'start',mode:'free',qid:first.id});rr({action:'answer',session:perfect.id,qid:first.id,label:first.answer.labels[0],unsure:false});rr({action:'finish',session:perfect.id});
+assert.throws(()=>rr({action:'start',mode:'free',retryOf:perfect.id}));
+assert.throws(()=>rr({action:'start',mode:'free',retryOf:'unknown'}));
+console.log('PASS: exact wrong/unanswered retry, fresh hidden answers, original result/progress preservation, all-correct and unfinished rejection, backup compatibility');
