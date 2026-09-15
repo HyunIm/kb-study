@@ -24,12 +24,15 @@ export function createEngine(book) {
     else if(mode==='daily'){const rank=p=>p?.total?(p.due<=now?0:2):1;pool.sort((a,b)=>rank(map.get(a.id))-rank(map.get(b.id))||(map.get(a.id)?.due||0)-(map.get(b.id)?.due||0));}else if(input.random)pool=shuffle(pool);
     ids=pool.slice(0,[5,10,20].includes(input.count)?input.count:10).map(q=>q.id);
    }
-   if(!ids.length)throw Error('해당 조건에 맞는 문제가 없습니다.');const s={id:crypto.randomUUID(),mode,ids,answers:{},index:0,status:'active',created:now,expires:mode==='exam'?now+3600000:null,version};state.sessions.push(s);return payload(s,now);
+   if(!ids.length)throw Error('해당 조건에 맞는 문제가 없습니다.');let queue;
+   if(input.followIds!==undefined){if(mode!=='free'||!input.qid||!Array.isArray(input.followIds)||input.followIds.length<1||input.followIds.length>bank.length||input.followIds[0]!==input.qid||new Set(input.followIds).size!==input.followIds.length||!input.followIds.every(id=>byId.has(id)))throw Error('이어 풀 문제 목록을 확인해주세요.');queue=input.followIds.slice(1);}
+   const s={id:crypto.randomUUID(),mode,ids,answers:{},index:0,status:'active',created:now,expires:mode==='exam'?now+3600000:null,version,...(queue!==undefined?{queue}:{})};state.sessions.push(s);return payload(s,now);
   }
   if(input.action==='bookmark'){if(!byId.has(input.qid)||typeof input.value!=='boolean')throw Error('잘못된 문제입니다.');progress(state,input.qid).bookmark=input.value?1:0;return {ok:true};}
   const s=state.sessions.find(s=>s.id===input.session);if(!s)throw Error('학습 기록을 찾을 수 없습니다.');if(s.status==='complete')return payload(s,now);
   if(input.action==='finish')finish(state,s,now);
   else if(input.action==='answer'){if(!s.ids.includes(input.qid)||!byId.get(input.qid).choices.some(c=>c.label===input.label)||typeof input.unsure!=='boolean')throw Error('선택한 답안을 확인해주세요.');if(s.mode!=='exam'&&s.answers[input.qid]?.graded)return payload(s,now);s.answers[input.qid]={label:input.label,unsure:input.unsure,graded:false};if(s.mode!=='exam')grade(state,s,input.qid,now);}
+  else if(input.action==='next'){if(s.mode!=='free'||!Array.isArray(s.queue))throw Error('이어 풀 수 없는 학습입니다.');if(s.ids[s.index]!==input.qid)return payload(s,now);if(!s.answers[input.qid]?.graded)throw Error('정답을 먼저 확인해주세요.');if(s.index<s.ids.length-1)s.index++;else{if(!s.queue.length)throw Error('마지막 문제입니다. 학습을 마쳐주세요.');s.ids.push(s.queue.shift());s.index=s.ids.length-1;}}
   else if(input.action==='position'){if(!Number.isInteger(input.index)||input.index<0||input.index>=s.ids.length)throw Error('잘못된 문제 위치입니다.');s.index=input.index;}
   else throw Error('지원하지 않는 요청입니다.');return payload(s,now);
  }
@@ -39,9 +42,10 @@ export function createEngine(book) {
   const integer=(n,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(n)&&n>=0&&n<=max;
   const pids=new Set(),sids=new Set();const clean=blank();
   for(const p of value.progress){if(!p||!byId.has(p.qid)||pids.has(p.qid)||!['total','correct','due'].every(k=>integer(p[k]))||p.correct>p.total||!['last_correct','unsure','bookmark'].every(k=>integer(p[k],1))||!integer(p.stage,3))fail();pids.add(p.qid);clean.progress.push(Object.fromEntries(['qid','total','correct','due','last_correct','unsure','bookmark','stage'].map(k=>[k,p[k]])));}
-  for(const s of value.sessions){if(!s||typeof s.id!=='string'||!/^[a-f0-9-]{36}$/.test(s.id)||sids.has(s.id)||s.version!==version||!['daily','free','review','exam'].includes(s.mode)||!['active','complete'].includes(s.status)||!Array.isArray(s.ids)||!s.ids.length||s.ids.length>50||new Set(s.ids).size!==s.ids.length||!s.ids.every(id=>byId.has(id))||!integer(s.index,s.ids.length-1)||!integer(s.created)||s.mode==='exam'&&(s.ids.length!==50||s.expires!==s.created+3600000)||s.mode!=='exam'&&s.expires!==null||!s.answers||typeof s.answers!=='object'||Array.isArray(s.answers))fail();
+  for(const s of value.sessions){if(!s||typeof s.id!=='string'||!/^[a-f0-9-]{36}$/.test(s.id)||sids.has(s.id)||s.version!==version||!['daily','free','review','exam'].includes(s.mode)||!['active','complete'].includes(s.status)||!Array.isArray(s.ids)||!s.ids.length||s.ids.length>bank.length||new Set(s.ids).size!==s.ids.length||!s.ids.every(id=>byId.has(id))||!integer(s.index,s.ids.length-1)||!integer(s.created)||s.mode==='exam'&&(s.ids.length!==50||s.expires!==s.created+3600000)||s.mode!=='exam'&&s.expires!==null||!s.answers||typeof s.answers!=='object'||Array.isArray(s.answers))fail();
+   if(s.queue!==undefined&&(s.mode!=='free'||!Array.isArray(s.queue)||s.queue.length+s.ids.length>bank.length||new Set(s.queue).size!==s.queue.length||!s.queue.every(id=>byId.has(id)&&!s.ids.includes(id))))fail();
    const answers={};for(const [id,a] of Object.entries(s.answers)){if(!s.ids.includes(id)||!a||typeof a.unsure!=='boolean'||typeof a.graded!=='boolean'||!(byId.get(id).choices.some(c=>c.label===a.label)||a.label===''&&s.status==='complete')||s.status==='active'&&(s.mode==='exam'?a.graded:!a.graded)||s.status==='complete'&&!a.graded)fail();answers[id]={label:a.label,unsure:a.unsure,graded:a.graded};}
-   if(s.status==='complete'&&(Object.keys(answers).length!==s.ids.length||!integer(s.finished)||s.finished<s.created))fail();sids.add(s.id);clean.sessions.push({id:s.id,mode:s.mode,ids:[...s.ids],answers,index:s.index,status:s.status,created:s.created,expires:s.expires,version,...(s.status==='complete'?{finished:s.finished}:{})});
+   if(s.status==='complete'&&(Object.keys(answers).length!==s.ids.length||!integer(s.finished)||s.finished<s.created))fail();sids.add(s.id);clean.sessions.push({id:s.id,mode:s.mode,ids:[...s.ids],answers,index:s.index,status:s.status,created:s.created,expires:s.expires,version,...(s.queue!==undefined?{queue:[...s.queue]}:{}),...(s.status==='complete'?{finished:s.finished}:{})});
   }return clean;
  }
  return {blank,run,validate,version};

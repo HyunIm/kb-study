@@ -9,3 +9,5 @@ button,a{touch-action:manipulation}button{display:inline-flex;align-items:center
 
 /* Let choice sentences wrap at word boundaries instead of PDF line endings. */
 .choice .question-text p{word-break:keep-all;overflow-wrap:anywhere}
+
+.question-actions.continuing{display:grid;grid-template-columns:1fr 1.3fr 1.5fr;gap:8px}.question-actions.continuing button{min-width:0;padding:10px 6px;font-size:14px;white-space:nowrap}.question-actions.continuing button svg{width:16px;flex-shrink:0}

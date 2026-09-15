@@ -63,3 +63,27 @@ const rawChoice=book.questions[0].choices[0].content[0].text;
 assert.ok(rawChoice.includes('거래가\n제한된다.'));
 assert.ok(choiceText(rawChoice).includes('거래가 제한된다.'));
 console.log('PASS: choice PDF line reflow, paragraph/list preservation, original data unchanged');
+// Selecting a catalog item opens subsequent matching questions only on demand.
+const flowState=engine.blank(),flow=(cmd)=>engine.run(flowState,cmd,null,now);
+const sequence=[book.questions[10].id,book.questions[13].id,book.questions[18].id];
+let follow=flow({action:'start',mode:'free',qid:sequence[0],followIds:sequence});
+assert.deepEqual(follow.ids,[sequence[0]]);assert.deepEqual(follow.queue,sequence.slice(1));
+assert.throws(()=>flow({action:'next',session:follow.id,qid:sequence[0]}));
+const answerFlow=id=>flow({action:'answer',session:follow.id,qid:id,label:book.questions.find(q=>q.id===id).answer.labels[0],unsure:false});
+answerFlow(sequence[0]);follow=flow({action:'next',session:follow.id,qid:sequence[0]});
+assert.equal(follow.ids[follow.index],sequence[1]);assert.ok(!follow.questions[1].answer);
+flow({action:'next',session:follow.id,qid:sequence[0]});assert.equal(flowState.sessions[0].ids.length,2,'duplicate next skipped a question');
+assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(flowState))),flowState,'queue lost on backup');
+const resumedStore=createStore(engine,new IDBFactory());await resumedStore.restore(flowState);
+assert.deepEqual((await resumedStore.request(undefined,follow.id,now)).queue,[sequence[2]]);
+answerFlow(sequence[1]);const stopped=flow({action:'finish',session:follow.id});
+assert.equal(stopped.score,100);assert.equal(stopped.ids.length,2);assert.equal(flowState.progress.length,2);
+assert.ok(!flowState.progress.some(p=>p.qid===sequence[2]),'unopened question counted as wrong');
+const badQueue=structuredClone(flowState);badQueue.sessions[0].queue=[sequence[0]];assert.throws(()=>engine.validate(badQueue));
+const last=flow({action:'start',mode:'free',qid:sequence[2],followIds:[sequence[2]]});assert.deepEqual(last.queue,[]);
+assert.throws(()=>flow({action:'start',mode:'free',qid:sequence[0],followIds:[sequence[0],sequence[0]]}));
+const longState=engine.blank();const longIds=book.questions.slice(0,51).map(q=>q.id);
+const longRun=cmd=>engine.run(longState,cmd,null,now);const longSession=longRun({action:'start',mode:'free',qid:longIds[0],followIds:longIds});
+for(let i=0;i<longIds.length;i++){longRun({action:'answer',session:longSession.id,qid:longIds[i],label:book.questions[i].answer.labels[0],unsure:false});if(i<50)longRun({action:'next',session:longSession.id,qid:longIds[i]});}
+assert.deepEqual(engine.validate(longState),longState);assert.equal(longRun({action:'finish',session:longSession.id}).score,100);
+console.log('PASS: filtered-order continuation, answer-before-next, duplicate next safety, queue persistence/backup, early finish excluding unopened questions, last item, long sessions');
