@@ -87,3 +87,18 @@ const longRun=cmd=>engine.run(longState,cmd,null,now);const longSession=longRun(
 for(let i=0;i<longIds.length;i++){longRun({action:'answer',session:longSession.id,qid:longIds[i],label:book.questions[i].answer.labels[0],unsure:false});if(i<50)longRun({action:'next',session:longSession.id,qid:longIds[i]});}
 assert.deepEqual(engine.validate(longState),longState);assert.equal(longRun({action:'finish',session:longSession.id}).score,100);
 console.log('PASS: filtered-order continuation, answer-before-next, duplicate next safety, queue persistence/backup, early finish excluding unopened questions, last item, long sessions');
+
+// Unseen practice excludes graded questions but includes bookmark-only records.
+const unseenState=engine.blank(), ur=cmd=>engine.run(unseenState,cmd,null,now);
+const chapterQuestions=book.questions.filter(q=>q.chapter.number===2);
+for(const q of chapterQuestions.slice(0,-2)){
+ const s=ur({action:'start',mode:'free',qid:q.id});
+ ur({action:'answer',session:s.id,qid:q.id,label:q.choices[0].label,unsure:false});
+}
+ur({action:'bookmark',qid:chapterQuestions.at(-1).id,value:true});
+const unseen=ur({action:'start',mode:'free',chapter:2,count:10,random:true,unseenOnly:true});
+assert.deepEqual([...unseen.ids].sort(),chapterQuestions.slice(-2).map(q=>q.id).sort());
+assert.equal(ur({action:'start',mode:'free',chapter:2,count:10,unseenOnly:false}).ids.length,10);
+for(const id of unseen.ids)ur({action:'answer',session:unseen.id,qid:id,label:book.questions.find(q=>q.id===id).choices[0].label,unsure:false});
+assert.throws(()=>ur({action:'start',mode:'free',chapter:2,unseenOnly:true}));
+console.log('PASS: unseen-only practice, chapter intersection, bookmark-only inclusion, fewer than 10 remaining, empty pool, filter off');
