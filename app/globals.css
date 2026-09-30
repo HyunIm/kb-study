@@ -17,3 +17,5 @@ button,a{touch-action:manipulation}button{display:inline-flex;align-items:center
 @media(max-width:650px){.list-top-button{bottom:calc(84px + env(safe-area-inset-bottom))}}
 
 .search-field{position:relative;margin:16px 0}.search-field .search{margin:0;padding-right:52px}.search-clear{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:44px;min-height:44px;padding:0;border:0;background:transparent;color:#60584c;font-size:26px;border-radius:8px}
+
+.choice.choice-correct{border:2px solid #287052;background:#eaf5f1;padding:15px}.correct-choice-label{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:6px;background:#287052;color:white;font-size:14px;font-weight:700;vertical-align:middle}
