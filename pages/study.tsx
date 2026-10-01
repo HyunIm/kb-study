@@ -36,13 +36,13 @@ export default function Study(){
 
  const questionTop=useRef<HTMLElement>(null),answerPanel=useRef<HTMLDivElement>(null);
  const [importData,setImportData]=useState<any>(null),[backupMessage,setBackupMessage]=useState('');
- const offset=useRef(0),finishLock=useRef(false);
+ const offset=useRef(0),finishLock=useRef(false),epoch=useRef(0);
  const refresh=useCallback(async()=>{const d=await request();setInfo(d);return d;},[]);
  function accept(s:Session){offset.current=s.serverTime-Date.now();setSession(s);setIndex(s.index);const a=s.answers[s.ids[s.index]];setLabel(a?.label||'');setUnsure(a?.unsure||false);const url='?session='+s.id;if(new URLSearchParams(location.search).has('session'))history.replaceState(history.state,'',url);else history.pushState({kbSession:true},'',url);}
- async function load(id:string){rememberList();setBusy(true);setError('');try{accept(await request(undefined,'/api/study?session='+encodeURIComponent(id)));setReviewing(false);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ async function load(id:string){rememberList();setBusy(true);setError('');const e=epoch.current;try{const s=await request(undefined,'/api/study?session='+encodeURIComponent(id));if(e!==epoch.current)return;accept(s);setReviewing(false);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
  useEffect(()=>{refresh().catch(e=>setError(e.message));const id=new URLSearchParams(location.search).get('session');if(id)void load(id);const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t);},[refresh]);
- async function start(mode:string,extra:Record<string,unknown>={}){rememberList();setBusy(true);setError('');try{const s=await request({action:'start',mode,count:Number(count),chapter:chapter==='all'?undefined:Number(chapter),section:section==='all'?undefined:section,filter,...extra});accept(s);setReviewing(false);return {sessionId:s.id,questions:s.ids.length};}catch(e){setError((e as Error).message);throw e;}finally{setBusy(false);}}
- async function act(action:string,extra:Record<string,unknown>={}){if(!session)return;setBusy(true);setError('');try{const s=await request({action,session:session.id,...extra});accept(s);if(action==='answer'||s.status==='complete')await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ async function start(mode:string,extra:Record<string,unknown>={}){rememberList();setBusy(true);setError('');const e=epoch.current;try{const s=await request({action:'start',mode,count:Number(count),chapter:chapter==='all'?undefined:Number(chapter),section:section==='all'?undefined:section,filter,...extra});if(e!==epoch.current)return {sessionId:s.id,questions:s.ids.length};accept(s);setReviewing(false);return {sessionId:s.id,questions:s.ids.length};}catch(e){setError((e as Error).message);throw e;}finally{setBusy(false);}}
+ async function act(action:string,extra:Record<string,unknown>={}){if(!session)return;setBusy(true);setError('');const e=epoch.current;try{const s=await request({action,session:session.id,...extra});if(e!==epoch.current)return;accept(s);if(action==='answer'||s.status==='complete')await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
  const finish=useCallback(async()=>{if(!session||finishLock.current)return;finishLock.current=true;await act('finish');finishLock.current=false;},[session]);
  useEffect(()=>{if(session?.mode==='exam'&&session.status==='active'&&session.expires&&now+offset.current>=session.expires&&!busy&&!error)void finish();},[now,session,busy,error,finish]);
  const startRef=useRef(start);startRef.current=start;
@@ -58,7 +58,8 @@ export default function Study(){
  const studied=(info?.progress||[]).filter(p=>p.total>0).length,due=(info?.progress||[]).filter(p=>p.total>0&&p.due<=now).length;
  const total=info?.catalog.length||0,unseen=total-studied,days=Math.ceil((new Date('2026-10-12T00:00:00+09:00').getTime()-now)/86400000);
  const query=searchQuery(search),filtered=(info?.catalog||[]).filter(q=>(chapter==='all'||q.chapter.number===Number(chapter))&&(section==='all'||q.section?.id===section)&&matchesSearch(q,query)&&(tab!=='free'||!unseenOnly||!progress.get(q.id)?.total)&&(tab!=='review'||matchesReview(progress.get(q.id),filter,now)));
- function leave(){restoreScroll.current=true;setSession(null);setReviewing(false);void refresh().catch(e=>setError(e.message));}
+ // Leaving bumps the epoch so responses still in flight cannot reopen the session.
+ function leave(){epoch.current++;setConfirm(false);restoreScroll.current=true;setSession(null);setReviewing(false);void refresh().catch(e=>setError(e.message));}
  function home(){if(history.state?.kbSession){history.back();return;}history.replaceState(null,'',location.pathname);leave();}
  const popRef=useRef({load,leave});popRef.current={load,leave};
  useEffect(()=>{const onPop=()=>{const id=new URLSearchParams(location.search).get('session');if(id)void popRef.current.load(id);else popRef.current.leave();};window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop);},[]);
