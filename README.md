@@ -21,6 +21,7 @@ Node.js 24 이상에서 `npm ci`, `npm run test:pages`, `npm run build:pages`를
 
 저장소 Settings → Pages → Build and deployment → Source를 **GitHub Actions**로 선택합니다.
 main 브랜치에 커밋하면 테스트 및 빌드 후 dist-pages 디렉터리를 배포합니다.
+Pull Request에서는 배포 없이 테스트·타입 검사·빌드만 실행합니다.
 URL: https://hyunim.github.io/kb-study/
 
 기존 서버 서비스의 계정·학습 기록은 이 정적 버전에 자동으로 이전되지 않습니다.

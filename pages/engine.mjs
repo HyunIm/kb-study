@@ -1,3 +1,7 @@
+// Shared by the engine and the list UI so both select the same questions.
+export const searchQuery=text=>String(text||'').trim().toLowerCase().slice(0,200);
+export const matchesSearch=(item,query)=>!query||[item.title,item.number,...item.pages,item.chapter.title,item.section?.title||''].join(' ').toLowerCase().includes(query);
+export const matchesReview=(p,filter,now)=>!!p&&!!(filter==='bookmark'?p.bookmark:filter==='wrong'?p.total&&!p.last_correct:filter==='unsure'?p.unsure:p.total&&p.due<=now);
 export function createEngine(book) {
  const bank=book.questions, byId=new Map(bank.map(q=>[q.id,q]));
  const version=book.book.sha256+'-credit-card-11-confirmed-1';
@@ -20,8 +24,8 @@ export function createEngine(book) {
    else if(mode==='exam')ids=examIds();else if(input.qid&&byId.has(input.qid))ids=[input.qid];else{
     const map=new Map(state.progress.map(p=>[p.qid,p]));let pool=bank.filter(q=>(!input.chapter||q.chapter.number===Number(input.chapter))&&(!input.section||q.section?.id===input.section));
     if(mode==='free'&&input.unseenOnly===true)pool=pool.filter(q=>!map.get(q.id)?.total);
-    if(input.search){const query=String(input.search).trim().toLowerCase().slice(0,200);const matches=new Set(catalog.filter(q=>[q.title,q.number,...q.pages,q.chapter.title,q.section?.title||''].join(' ').toLowerCase().includes(query)).map(q=>q.id));pool=pool.filter(q=>matches.has(q.id));}
-    if(mode==='review'){pool=pool.filter(q=>{const p=map.get(q.id);return p&&(input.filter==='bookmark'?p.bookmark:input.filter==='wrong'?p.total&&!p.last_correct:input.filter==='unsure'?p.unsure:p.total&&p.due<=now);}).sort((a,b)=>(map.get(a.id)?.due||0)-(map.get(b.id)?.due||0));}
+    if(input.search){const query=searchQuery(input.search);const matches=new Set(catalog.filter(q=>matchesSearch(q,query)).map(q=>q.id));pool=pool.filter(q=>matches.has(q.id));}
+    if(mode==='review'){pool=pool.filter(q=>matchesReview(map.get(q.id),input.filter,now)).sort((a,b)=>(map.get(a.id)?.due||0)-(map.get(b.id)?.due||0));}
     else if(mode==='daily'){const rank=p=>p?.total?(p.due<=now?0:2):1;pool.sort((a,b)=>rank(map.get(a.id))-rank(map.get(b.id))||(map.get(a.id)?.due||0)-(map.get(b.id)?.due||0));}else if(input.random)pool=shuffle(pool);
     ids=pool.slice(0,[5,10,20].includes(input.count)?input.count:10).map(q=>q.id);
    }

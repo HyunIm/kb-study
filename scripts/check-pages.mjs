@@ -102,3 +102,11 @@ assert.equal(ur({action:'start',mode:'free',chapter:2,count:10,unseenOnly:false}
 for(const id of unseen.ids)ur({action:'answer',session:unseen.id,qid:id,label:book.questions.find(q=>q.id===id).choices[0].label,unsure:false});
 assert.throws(()=>ur({action:'start',mode:'free',chapter:2,unseenOnly:true}));
 console.log('PASS: unseen-only practice, chapter intersection, bookmark-only inclusion, fewer than 10 remaining, empty pool, filter off');
+
+// List UI and engine share these predicates.
+const {searchQuery,matchesSearch,matchesReview}=await import('../pages/engine.mjs');
+const item=engine.run(engine.blank()).catalog[0];
+assert.equal(searchQuery('  ABC '),'abc');assert.ok(matchesSearch(item,searchQuery('   ')));assert.ok(matchesSearch(item,searchQuery(' '+item.title.slice(0,8).toUpperCase()+' ')));assert.ok(!matchesSearch(item,'no_match_92749392842'));
+const dueP={total:1,last_correct:0,unsure:1,bookmark:0,due:now};
+assert.ok(matchesReview(dueP,'due',now)&&!matchesReview(dueP,'due',now-1)&&matchesReview(dueP,'wrong',now)&&matchesReview(dueP,'unsure',now)&&!matchesReview(dueP,'bookmark',now)&&!matchesReview(undefined,'due',now));
+console.log('PASS: shared search and review predicates');
