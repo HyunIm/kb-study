@@ -110,3 +110,25 @@ assert.equal(searchQuery('  ABC '),'abc');assert.ok(matchesSearch(item,searchQue
 const dueP={total:1,last_correct:0,unsure:1,bookmark:0,due:now};
 assert.ok(matchesReview(dueP,'due',now)&&!matchesReview(dueP,'due',now-1)&&matchesReview(dueP,'wrong',now)&&matchesReview(dueP,'unsure',now)&&!matchesReview(dueP,'bookmark',now)&&!matchesReview(undefined,'due',now));
 console.log('PASS: shared search and review predicates');
+
+// Unsure can be toggled after the answer is revealed and reschedules correct answers.
+const unsureState=engine.blank(),us=cmd=>engine.run(unsureState,cmd,null,now);
+const uq=book.questions[30],us1=us({action:'start',mode:'free',qid:uq.id});
+us({action:'answer',session:us1.id,qid:uq.id,label:uq.answer.labels[0],unsure:false});
+const up=()=>unsureState.progress.find(p=>p.qid===uq.id);
+assert.equal(up().stage,1);assert.equal(up().due,now+3*86400000);
+let toggled=us({action:'unsure',session:us1.id,qid:uq.id,value:true});
+assert.equal(toggled.answers[uq.id].unsure,true);assert.equal(up().unsure,1);assert.equal(up().stage,0);assert.equal(up().due,now+86400000);
+us({action:'unsure',session:us1.id,qid:uq.id,value:false});assert.equal(up().unsure,0);assert.equal(up().stage,1);assert.equal(up().due,now+3*86400000);
+assert.equal(up().total,1,'toggle must not grade again');
+assert.ok(matchesReview(up(),'due',now+3*86400000));
+const wq=book.questions[31],ws=us({action:'start',mode:'free',qid:wq.id});const wrongLabel=wq.choices.find(c=>c.label!==wq.answer.labels[0]).label;
+us({action:'answer',session:ws.id,qid:wq.id,label:wrongLabel,unsure:false});us({action:'unsure',session:ws.id,qid:wq.id,value:true});
+const wp=unsureState.progress.find(p=>p.qid===wq.id);assert.equal(wp.unsure,1);assert.equal(wp.stage,0);
+const ungraded=us({action:'start',mode:'free',qid:book.questions[32].id});
+assert.throws(()=>us({action:'unsure',session:ungraded.id,qid:book.questions[32].id,value:true}));
+const ue=us({action:'start',mode:'exam'});assert.throws(()=>us({action:'unsure',session:ue.id,qid:ue.ids[0],value:true}));
+us({action:'finish',session:us1.id});const doneProgress=JSON.stringify(up());assert.equal(us({action:'unsure',session:us1.id,qid:uq.id,value:true}).answers[uq.id].unsure,false);assert.equal(JSON.stringify(up()),doneProgress,'complete session is read-only');
+assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(unsureState))),unsureState);
+const badStage=structuredClone(unsureState);badStage.sessions[0].answers[uq.id].priorStage=9;assert.throws(()=>engine.validate(badStage));
+console.log('PASS: unsure toggle after reveal, reschedule and restore, wrong answers, ungraded/exam/complete rejection, backup keeps priorStage');
