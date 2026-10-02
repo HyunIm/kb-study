@@ -132,3 +132,18 @@ us({action:'finish',session:us1.id});const doneProgress=JSON.stringify(up());ass
 assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(unsureState))),unsureState);
 const badStage=structuredClone(unsureState);badStage.sessions[0].answers[uq.id].priorStage=9;assert.throws(()=>engine.validate(badStage));
 console.log('PASS: unsure toggle after reveal, reschedule and restore, wrong answers, ungraded/exam/complete rejection, backup keeps priorStage');
+
+// Toggling an older answer must not rewrite progress owned by a later grading.
+const olderState=engine.blank(),os=cmd=>engine.run(olderState,cmd,null,now);
+const oq=book.questions[40],first1=os({action:'start',mode:'free',qid:oq.id}),second1=os({action:'start',mode:'free',qid:oq.id});
+os({action:'answer',session:first1.id,qid:oq.id,label:oq.answer.labels[0],unsure:false});os({action:'answer',session:second1.id,qid:oq.id,label:oq.answer.labels[0],unsure:false});
+const op=olderState.progress[0];assert.equal(op.stage,2);const latest=JSON.stringify(op);
+os({action:'unsure',session:first1.id,qid:oq.id,value:true});assert.equal(JSON.stringify(op),latest,'older answer changed latest progress');
+assert.equal(engine.run(olderState,undefined,first1.id,now).answers[oq.id].unsure,true);os({action:'unsure',session:first1.id,qid:oq.id,value:false});assert.equal(JSON.stringify(op),latest);
+os({action:'unsure',session:second1.id,qid:oq.id,value:true});assert.equal(op.stage,0);os({action:'unsure',session:second1.id,qid:oq.id,value:false});assert.equal(op.stage,2);
+// Answers graded before attempts were recorded cannot toggle.
+const legacy=structuredClone(olderState);for(const s of legacy.sessions)for(const a of Object.values(s.answers)){delete a.priorStage;delete a.attempt;}
+const legacyState=engine.validate(legacy);assert.throws(()=>engine.run(legacyState,{action:'unsure',session:legacyState.sessions[0].id,qid:oq.id,value:true},null,now));
+const badAttempt=structuredClone(olderState);badAttempt.sessions[0].answers[oq.id].attempt=0;assert.throws(()=>engine.validate(badAttempt));
+assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(olderState))),olderState);
+console.log('PASS: older-session unsure toggle keeps latest progress, legacy answers rejected, attempt validated');
