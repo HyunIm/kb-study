@@ -110,3 +110,40 @@ assert.equal(searchQuery('  ABC '),'abc');assert.ok(matchesSearch(item,searchQue
 const dueP={total:1,last_correct:0,unsure:1,bookmark:0,due:now};
 assert.ok(matchesReview(dueP,'due',now)&&!matchesReview(dueP,'due',now-1)&&matchesReview(dueP,'wrong',now)&&matchesReview(dueP,'unsure',now)&&!matchesReview(dueP,'bookmark',now)&&!matchesReview(undefined,'due',now));
 console.log('PASS: shared search and review predicates');
+
+// Unsure can be toggled after the answer is revealed and reschedules correct answers.
+const unsureState=engine.blank(),us=cmd=>engine.run(unsureState,cmd,null,now);
+const uq=book.questions[30],us1=us({action:'start',mode:'free',qid:uq.id});
+us({action:'answer',session:us1.id,qid:uq.id,label:uq.answer.labels[0],unsure:false});
+const up=()=>unsureState.progress.find(p=>p.qid===uq.id);
+assert.equal(up().stage,1);assert.equal(up().due,now+3*86400000);
+let toggled=us({action:'unsure',session:us1.id,qid:uq.id,value:true});
+assert.equal(toggled.answers[uq.id].unsure,true);assert.equal(up().unsure,1);assert.equal(up().stage,0);assert.equal(up().due,now+86400000);
+us({action:'unsure',session:us1.id,qid:uq.id,value:false});assert.equal(up().unsure,0);assert.equal(up().stage,1);assert.equal(up().due,now+3*86400000);
+assert.equal(up().total,1,'toggle must not grade again');
+assert.ok(matchesReview(up(),'due',now+3*86400000));
+const wq=book.questions[31],ws=us({action:'start',mode:'free',qid:wq.id});const wrongLabel=wq.choices.find(c=>c.label!==wq.answer.labels[0]).label;
+us({action:'answer',session:ws.id,qid:wq.id,label:wrongLabel,unsure:false});us({action:'unsure',session:ws.id,qid:wq.id,value:true});
+const wp=unsureState.progress.find(p=>p.qid===wq.id);assert.equal(wp.unsure,1);assert.equal(wp.stage,0);
+const ungraded=us({action:'start',mode:'free',qid:book.questions[32].id});
+assert.throws(()=>us({action:'unsure',session:ungraded.id,qid:book.questions[32].id,value:true}));
+const ue=us({action:'start',mode:'exam'});assert.throws(()=>us({action:'unsure',session:ue.id,qid:ue.ids[0],value:true}));
+us({action:'finish',session:us1.id});const doneProgress=JSON.stringify(up());assert.equal(us({action:'unsure',session:us1.id,qid:uq.id,value:true}).answers[uq.id].unsure,false);assert.equal(JSON.stringify(up()),doneProgress,'complete session is read-only');
+assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(unsureState))),unsureState);
+const badStage=structuredClone(unsureState);badStage.sessions[0].answers[uq.id].priorStage=9;assert.throws(()=>engine.validate(badStage));
+console.log('PASS: unsure toggle after reveal, reschedule and restore, wrong answers, ungraded/exam/complete rejection, backup keeps priorStage');
+
+// Toggling an older answer must not rewrite progress owned by a later grading.
+const olderState=engine.blank(),os=cmd=>engine.run(olderState,cmd,null,now);
+const oq=book.questions[40],first1=os({action:'start',mode:'free',qid:oq.id}),second1=os({action:'start',mode:'free',qid:oq.id});
+os({action:'answer',session:first1.id,qid:oq.id,label:oq.answer.labels[0],unsure:false});os({action:'answer',session:second1.id,qid:oq.id,label:oq.answer.labels[0],unsure:false});
+const op=olderState.progress[0];assert.equal(op.stage,2);const latest=JSON.stringify(op);
+os({action:'unsure',session:first1.id,qid:oq.id,value:true});assert.equal(JSON.stringify(op),latest,'older answer changed latest progress');
+assert.equal(engine.run(olderState,undefined,first1.id,now).answers[oq.id].unsure,true);os({action:'unsure',session:first1.id,qid:oq.id,value:false});assert.equal(JSON.stringify(op),latest);
+os({action:'unsure',session:second1.id,qid:oq.id,value:true});assert.equal(op.stage,0);os({action:'unsure',session:second1.id,qid:oq.id,value:false});assert.equal(op.stage,2);
+// Answers graded before attempts were recorded cannot toggle.
+const legacy=structuredClone(olderState);for(const s of legacy.sessions)for(const a of Object.values(s.answers)){delete a.priorStage;delete a.attempt;}
+const legacyState=engine.validate(legacy);assert.throws(()=>engine.run(legacyState,{action:'unsure',session:legacyState.sessions[0].id,qid:oq.id,value:true},null,now));
+const badAttempt=structuredClone(olderState);badAttempt.sessions[0].answers[oq.id].attempt=0;assert.throws(()=>engine.validate(badAttempt));
+assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(olderState))),olderState);
+console.log('PASS: older-session unsure toggle keeps latest progress, legacy answers rejected, attempt validated');
