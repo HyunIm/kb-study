@@ -16,6 +16,7 @@
 ## 개발과 검증
 
 Node.js 24 이상에서 `npm ci`, `npm run test:pages`, `npm run build:pages`를 실행합니다.
+화면 테스트는 빌드 후 `npm run test:ui`로 실행합니다(Playwright Chromium 필요: `npx playwright install chromium`).
 로컬 실행은 `npm run dev`입니다.
 
 ## GitHub Pages

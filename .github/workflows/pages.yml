@@ -24,6 +24,8 @@ jobs:
       - run: npm run test:pages
       - run: npx tsc --noEmit -p .
       - run: npm run build:pages
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
       - if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
