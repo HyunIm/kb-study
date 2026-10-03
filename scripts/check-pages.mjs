@@ -24,7 +24,7 @@ const finished=run({action:'finish',session:exam.id});assert.equal(finished.scor
 const prior=JSON.stringify(state.progress);run({action:'finish',session:exam.id});assert.equal(JSON.stringify(state.progress),prior);
 const expired=run({action:'start',mode:'exam'});const end=run({action:'answer',session:expired.id,qid:expired.ids[0],label:'①',unsure:false},null,expired.expires);assert.equal(end.status,'complete');assert.equal(end.answers[expired.ids[0]].label,'');
 const backup=JSON.parse(JSON.stringify(state));assert.deepEqual(engine.validate(backup),state);
-for(const mutate of [b=>b.version='other',b=>b.progress[0].total=-1,b=>b.sessions[0].ids=['unknown'],b=>b.sessions[0].index=999,b=>b.sessions[1].expires=0,b=>b.sessions.push(b.sessions[0])]){const b=structuredClone(backup);mutate(b);assert.throws(()=>engine.validate(b));}
+for(const mutate of [b=>b.progress[0].total=-1,b=>b.sessions[0].ids=['unknown'],b=>b.sessions[0].index=999,b=>b.sessions[1].expires=0,b=>b.sessions.push(b.sessions[0])]){const b=structuredClone(backup);mutate(b);assert.throws(()=>engine.validate(b));}
 assert.throws(()=>run({action:'start',mode:'free',search:'NO_MATCH_92749392842'}));
 const factory=new IDBFactory(), tab1=createStore(engine,factory),tab2=createStore(engine,factory);
 const s=await tab1.request({action:'start',mode:'free',qid:credit.id},null,now);
@@ -32,7 +32,7 @@ await Promise.all([tab1.request({action:'answer',session:s.id,qid:credit.id,labe
 assert.equal((await tab2.snapshot()).progress[0].total,1);
 const reload=createStore(engine,factory);assert.equal((await reload.request(undefined,s.id,now)).answers[credit.id].label,'①');
 await reload.restore(backup);assert.deepEqual(engine.validate(await tab1.snapshot()),backup);
-assert.throws(()=>reload.restore({...backup,version:'wrong'}));assert.deepEqual(engine.validate(await tab1.snapshot()),backup);
+assert.throws(()=>reload.restore({...backup,year:2025}));assert.deepEqual(engine.validate(await tab1.snapshot()),backup);
 const independent=createStore(engine,new IDBFactory());assert.equal((await independent.snapshot()).sessions.length,0);
 await assert.rejects(()=>createStore(engine,null).snapshot());
 console.log('PASS: 750 questions, 13 chapter counts, original answers/printed pages, grading once, review/bookmark, 50-question exam/60-minute expiry, reload persistence, two-tab atomicity, backup round-trip, invalid backup preservation, independent device storage');
@@ -147,3 +147,21 @@ const legacyState=engine.validate(legacy);assert.throws(()=>engine.run(legacySta
 const badAttempt=structuredClone(olderState);badAttempt.sessions[0].answers[oq.id].attempt=0;assert.throws(()=>engine.validate(badAttempt));
 assert.deepEqual(engine.validate(JSON.parse(JSON.stringify(olderState))),olderState);
 console.log('PASS: older-session unsure toggle keeps latest progress, legacy answers rejected, attempt validated');
+
+// A data version change migrates records by question id instead of discarding them.
+const oldVersion={...backup,version:'old-data-version',sessions:backup.sessions.map(x=>({...x,version:'old-data-version'}))};
+assert.deepEqual(engine.validate(oldVersion),backup);
+const gone=structuredClone(oldVersion);gone.progress.push({...gone.progress[0],qid:'kb-removed-question'});gone.sessions.push({...structuredClone(gone.sessions[0]),id:'00000000-0000-0000-0000-000000000000',ids:['kb-removed-question'],answers:{},index:0});
+const migrated=engine.validate(gone);assert.equal(migrated.progress.length,backup.progress.length);assert.equal(migrated.sessions.length,backup.sessions.length);
+const sameVersionGone=structuredClone(gone);sameVersionGone.version=engine.version;for(const x of sameVersionGone.sessions)x.version=engine.version;assert.throws(()=>engine.validate(sameVersionGone),'current version stays strict');
+assert.throws(()=>engine.validate({...blankOther(),progress:[{...backup.progress[0],qid:'kb-removed-question'}]}),'nothing compatible');
+function blankOther(){return {...engine.blank(),version:'other-book'};}
+const putRaw=(factory,key,value)=>new Promise((res,rej)=>{const o=factory.open('kb-study-local',1);o.onupgradeneeded=()=>o.result.createObjectStore('books');o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite');tx.objectStore('books').put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;});
+const legacyFactory=new IDBFactory();await putRaw(legacyFactory,'2026:'+engine.version,backup);
+assert.deepEqual(engine.validate(await createStore(engine,legacyFactory).snapshot()),backup,'legacy key not migrated');
+const changedBook={...book,book:{...book.book,sha256:'next-'+book.book.sha256}},nextEngine=createEngine(changedBook);assert.notEqual(nextEngine.version,engine.version);
+const upgradeFactory=new IDBFactory();await putRaw(upgradeFactory,'2026:'+engine.version,backup);await putRaw(upgradeFactory,'2026:stale',{...engine.blank(),version:'stale'});
+const upgraded=await createStore(nextEngine,upgradeFactory).snapshot();assert.equal(upgraded.version,nextEngine.version);assert.equal(upgraded.progress.length,backup.progress.length);assert.equal(upgraded.sessions.length,backup.sessions.length);
+const afterWrite=createStore(nextEngine,upgradeFactory);await afterWrite.request({action:'bookmark',qid:book.questions[5].id,value:true},null,now);
+assert.equal((await createStore(nextEngine,upgradeFactory).snapshot()).sessions.length,backup.sessions.length,'migrated records persist under the fixed key');
+console.log('PASS: data version migration by question id, strict current version, legacy key pickup, upgrade after data change');

@@ -48,7 +48,17 @@ export function createEngine(book) {
   else if(input.action==='position'){if(!Number.isInteger(input.index)||input.index<0||input.index>=s.ids.length)throw Error('잘못된 문제 위치입니다.');s.index=input.index;}
   else throw Error('지원하지 않는 요청입니다.');return payload(s,now);
  }
- function validate(value){
+ // Records from another data version keep every progress row and session that is still valid against
+ // the current questions; only items for questions that no longer exist are dropped.
+ function migrate(value){
+  if(!value||typeof value.version!=='string'||value.version===version||!Array.isArray(value.progress)||!Array.isArray(value.sessions))return value;
+  const keeps=(progress,sessions)=>{try{check({...value,version,progress,sessions});return true;}catch{return false;}};
+  const migrated={...value,version,progress:value.progress.filter(p=>keeps([p],[])),sessions:value.sessions.filter(s=>keeps([],[{...s,version}])).map(s=>({...s,version}))};
+  if(!migrated.progress.length&&!migrated.sessions.length&&(value.progress.length||value.sessions.length))throw Error('이 문제집과 호환되는 기록이 없는 백업입니다. 기존 기록은 변경하지 않았습니다.');
+  return migrated;
+ }
+ const validate=value=>check(migrate(value));
+ function check(value){
   const fail=()=>{throw Error('이 문제집과 호환되는 올바른 백업 파일이 아닙니다. 기존 기록은 변경하지 않았습니다.');};
   if(!value||value.format!=='kb-study-backup'||value.schema!==1||value.version!==version||value.year!==2026||!Array.isArray(value.progress)||!Array.isArray(value.sessions)||value.progress.length>bank.length||value.sessions.length>100000)fail();
   const integer=(n,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(n)&&n>=0&&n<=max;
