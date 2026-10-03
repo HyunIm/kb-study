@@ -1,4 +1,4 @@
-import {useEffect,useState,useRef,useCallback} from 'react';
+import {useEffect,useState,useRef,useCallback,useMemo} from 'react';
 import {BookOpen,ArrowUp,ArrowRight,RotateCcw,ClipboardList,BarChart3,Bookmark,ChevronLeft,House,Clock} from 'lucide-react';
 import {RadioGroup,RadioGroupItem} from '@/components/ui/radio-group';
 import {Checkbox} from '@/components/ui/checkbox';
@@ -40,7 +40,7 @@ export default function Study(){
  const refresh=useCallback(async()=>{const d=await request();setInfo(d);return d;},[]);
  function accept(s:Session){offset.current=s.serverTime-Date.now();setSession(s);setIndex(s.index);const a=s.answers[s.ids[s.index]];setLabel(a?.label||'');setUnsure(a?.unsure||false);const url='?session='+s.id;if(new URLSearchParams(location.search).has('session'))history.replaceState(history.state,'',url);else history.pushState({kbSession:true},'',url);}
  async function load(id:string){rememberList();setBusy(true);setError('');const e=epoch.current;try{const s=await request(undefined,'/api/study?session='+encodeURIComponent(id));if(e!==epoch.current)return;accept(s);setReviewing(false);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
- useEffect(()=>{refresh().catch(e=>setError(e.message));const id=new URLSearchParams(location.search).get('session');if(id)void load(id);const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t);},[refresh]);
+ useEffect(()=>{refresh().catch(e=>setError(e.message));const id=new URLSearchParams(location.search).get('session');if(id)void load(id);},[refresh]);
  async function start(mode:string,extra:Record<string,unknown>={}){rememberList();setBusy(true);setError('');const e=epoch.current;try{const s=await request({action:'start',mode,count:Number(count),chapter:chapter==='all'?undefined:Number(chapter),section:section==='all'?undefined:section,filter,...extra});if(e!==epoch.current)return {sessionId:s.id,questions:s.ids.length};accept(s);setReviewing(false);return {sessionId:s.id,questions:s.ids.length};}catch(e){setError((e as Error).message);throw e;}finally{setBusy(false);}}
  async function act(action:string,extra:Record<string,unknown>={}){if(!session)return;setBusy(true);setError('');const e=epoch.current;try{const s=await request({action,session:session.id,...extra});if(e!==epoch.current)return;accept(s);if(action==='answer'||action==='unsure'||s.status==='complete')await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
  const finish=useCallback(async()=>{if(!session||finishLock.current)return;finishLock.current=true;await act('finish');finishLock.current=false;},[session]);
@@ -54,14 +54,17 @@ export default function Study(){
  function navigate(next:string){if(next===tab)return;rememberList();const view=views.current[next]||{chapter:'all',section:'all',search:'',filter:'due',y:0};setTab(next);setChapter(view.chapter);setSection(view.section);setSearch(view.search);setFilter(view.filter);setUnseenOnly(!!view.unseenOnly);listScroll.current=view.y;restoreScroll.current=true;}
  const chapters=info?[...new Map(info.catalog.map(q=>[q.chapter.number,q.chapter])).values()]:[];
  const sections=info?[...new Map(info.catalog.filter(q=>q.section&&(chapter==='all'||q.chapter.number===Number(chapter))).map(q=>[q.section.id,q.section])).values()]:[];
- const progress=new Map((info?.progress||[]).map(p=>[p.qid,p]));
+ const progress=useMemo(()=>new Map((info?.progress||[]).map(p=>[p.qid,p])),[info]);
  const studied=(info?.progress||[]).filter(p=>p.total>0).length,due=(info?.progress||[]).filter(p=>p.total>0&&p.due<=now).length;
  const examDays=Math.ceil((new Date('2026-11-07T00:00:00+09:00').getTime()-now)/86400000),total=info?.catalog.length||0,unseen=total-studied,days=Math.ceil((new Date('2026-10-12T00:00:00+09:00').getTime()-now)/86400000);
- const query=searchQuery(search),filtered=(info?.catalog||[]).filter(q=>(chapter==='all'||q.chapter.number===Number(chapter))&&(section==='all'||q.section?.id===section)&&matchesSearch(q,query)&&(tab!=='free'||!unseenOnly||!progress.get(q.id)?.total)&&(tab!=='review'||matchesReview(progress.get(q.id),filter,now)));
+ const query=searchQuery(search),reviewNow=tab==='review'?now:0;
+ const filtered=useMemo(()=>(info?.catalog||[]).filter(q=>(chapter==='all'||q.chapter.number===Number(chapter))&&(section==='all'||q.section?.id===section)&&matchesSearch(q,query)&&(tab!=='free'||!unseenOnly||!progress.get(q.id)?.total)&&(tab!=='review'||matchesReview(progress.get(q.id),filter,reviewNow))),[info,progress,chapter,section,query,tab,unseenOnly,filter,reviewNow]);
  // Leaving bumps the epoch so responses still in flight cannot reopen the session.
  function leave(){epoch.current++;allowLeave.current=false;setConfirm(false);setLeaveConfirm(false);restoreScroll.current=true;setSession(null);setReviewing(false);void refresh().catch(e=>setError(e.message));}
  function home(){if(history.state?.kbSession){history.back();return;}history.replaceState(null,'',location.pathname);leave();}
  const allowLeave=useRef(false),examActive=session?.mode==='exam'&&session.status==='active';
+ // The clock only needs second precision for the exam timer; elsewhere a minute keeps due counts fresh.
+ useEffect(()=>{setNow(Date.now());const t=setInterval(()=>setNow(Date.now()),examActive?1000:60000);const wake=()=>{if(document.visibilityState==='visible')setNow(Date.now());};document.addEventListener('visibilitychange',wake);return()=>{clearInterval(t);document.removeEventListener('visibilitychange',wake);};},[examActive]);
  const popRef=useRef({load,leave,examActive,sessionId:session?.id});popRef.current={load,leave,examActive,sessionId:session?.id};
  useEffect(()=>{const onPop=()=>{const id=new URLSearchParams(location.search).get('session'),cur=popRef.current;if(!id&&cur.examActive&&!allowLeave.current){history.pushState({kbSession:true},'','?session='+cur.sessionId);setLeaveConfirm(true);return;}if(id)void popRef.current.load(id);else popRef.current.leave();};window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop);},[]);
  const choose=(v:string)=>{setLabel(v);if(session?.mode==='exam')void act('answer',{qid:q!.id,label:v,unsure});};
