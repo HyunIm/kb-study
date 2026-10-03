@@ -165,3 +165,24 @@ const upgraded=await createStore(nextEngine,upgradeFactory).snapshot();assert.eq
 const afterWrite=createStore(nextEngine,upgradeFactory);await afterWrite.request({action:'bookmark',qid:book.questions[5].id,value:true},null,now);
 assert.equal((await createStore(nextEngine,upgradeFactory).snapshot()).sessions.length,backup.sessions.length,'migrated records persist under the fixed key');
 console.log('PASS: data version migration by question id, strict current version, legacy key pickup, upgrade after data change');
+
+// Migration trims removed questions out of sessions instead of dropping them, and stored state never bricks.
+const keepQ=book.questions.slice(60,63).map(q=>q.id),trimState=engine.blank(),tr=cmd=>engine.run(trimState,cmd,null,now);
+const ts=tr({action:'start',mode:'free',qid:keepQ[0],followIds:keepQ});const tq=book.questions[60];tr({action:'answer',session:ts.id,qid:tq.id,label:tq.answer.labels[0],unsure:false});
+const te=tr({action:'start',mode:'exam'});tr({action:'answer',session:te.id,qid:te.ids[1],label:'①',unsure:false});
+const removed=new Set([te.ids[0],keepQ[2]]);
+const trimBook={...book,book:{...book.book,sha256:'trim-'+book.book.sha256}};
+const trimEngine=createEngine({...trimBook,questions:book.questions.filter(q=>!removed.has(q.id))});
+const trimmed=trimEngine.validate(JSON.parse(JSON.stringify(trimState)));
+const tFree=trimmed.sessions.find(x=>x.id===ts.id),tExam=trimmed.sessions.find(x=>x.id===te.id);
+assert.deepEqual(tFree.ids,[keepQ[0]]);assert.deepEqual(tFree.queue,[keepQ[1]]);assert.equal(tFree.answers[keepQ[0]].label,tq.answer.labels[0]);
+assert.equal(tExam.ids.length,49);assert.ok(!tExam.ids.includes(te.ids[0]));assert.equal(tExam.answers[te.ids[1]].label,'①');assert.equal(tExam.ids[tExam.index],te.ids[1]);
+assert.equal(trimmed.progress.length,1);
+const onlyRemoved=engine.blank();const or=engine.run(onlyRemoved,{action:'start',mode:'free',qid:te.ids[0]},null,now);
+assert.throws(()=>trimEngine.validate(JSON.parse(JSON.stringify(onlyRemoved))),'backup with nothing usable is refused');
+assert.deepEqual(trimEngine.validate(JSON.parse(JSON.stringify(onlyRemoved)),{fromStore:true}).sessions,[]);
+const brickFactory=new IDBFactory();await putRaw(brickFactory,'2026',JSON.parse(JSON.stringify(onlyRemoved)));
+const recovered=createStore(trimEngine,brickFactory);assert.equal((await recovered.snapshot()).sessions.length,0);
+await recovered.request({action:'bookmark',qid:book.questions[5].id,value:true},null,now);assert.equal((await recovered.snapshot()).progress.length,1,'store usable after migration left nothing');
+assert.ok(or.id);
+console.log('PASS: migration trims removed questions from sessions and exams, keeps position/answers/queue, stored state recovers when nothing survives');

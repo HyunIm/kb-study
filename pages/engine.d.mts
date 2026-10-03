@@ -23,8 +23,9 @@ export type Engine={
  run(state:State,input?:undefined,id?:null,now?:number):Info;
  run(state:State,input:{action:'bookmark'}&Record<string,unknown>,id?:string|null,now?:number):{ok:true};
  run(state:State,input:Record<string,unknown>,id?:string|null,now?:number):SessionPayload;
- /** Checks a stored record or backup, migrating other data versions by question id. Throws if unusable. */
- validate(value:unknown):State;
+ /** Checks a stored record or backup, migrating other data versions by question id. Throws if unusable;
+  * with fromStore, a migration that leaves nothing yields an empty state instead of throwing. */
+ validate(value:unknown,options?:{fromStore?:boolean}):State;
 };
 
 export function searchQuery(text:unknown):string;
