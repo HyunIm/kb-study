@@ -48,13 +48,31 @@ export function createEngine(book) {
   else if(input.action==='position'){if(!Number.isInteger(input.index)||input.index<0||input.index>=s.ids.length)throw Error('잘못된 문제 위치입니다.');s.index=input.index;}
   else throw Error('지원하지 않는 요청입니다.');return payload(s,now);
  }
- function validate(value){
+ // Records from another data version keep every progress row and session that is still valid against
+ // the current questions; only items for questions that no longer exist are dropped.
+ // Sessions lose only their removed questions: ids, answers and queue are trimmed and the current position kept.
+ function trimSession(s){
+  if(!s||!Array.isArray(s.ids))return s;
+  const ids=s.ids.filter(id=>byId.has(id)),current=s.ids[s.index],before=s.ids.slice(0,Number(s.index)||0).filter(id=>byId.has(id)).length;
+  const answers=s.answers&&typeof s.answers==='object'&&!Array.isArray(s.answers)?Object.fromEntries(Object.entries(s.answers).filter(([id])=>ids.includes(id))):s.answers;
+  return {...s,version,ids,answers,index:byId.has(current)?ids.indexOf(current):Math.min(before,Math.max(ids.length-1,0)),...(Array.isArray(s.queue)?{queue:s.queue.filter(id=>byId.has(id)&&!ids.includes(id))}:{})};
+ }
+ function migrate(value,fromStore){
+  if(!value||typeof value.version!=='string'||value.version===version||!Array.isArray(value.progress)||!Array.isArray(value.sessions))return value;
+  const keeps=(progress,sessions)=>{try{check({...value,version,progress,sessions});return true;}catch{return false;}};
+  const migrated={...value,version,progress:value.progress.filter(p=>keeps([p],[])),sessions:value.sessions.map(trimSession).filter(s=>keeps([],[s]))};
+  // A backup with nothing usable is refused; records already on this device fall back to what survived, even if empty.
+  if(!fromStore&&!migrated.progress.length&&!migrated.sessions.length&&(value.progress.length||value.sessions.length))throw Error('이 문제집과 호환되는 기록이 없는 백업입니다. 기존 기록은 변경하지 않았습니다.');
+  return migrated;
+ }
+ const validate=(value,{fromStore=false}={})=>check(migrate(value,fromStore));
+ function check(value){
   const fail=()=>{throw Error('이 문제집과 호환되는 올바른 백업 파일이 아닙니다. 기존 기록은 변경하지 않았습니다.');};
   if(!value||value.format!=='kb-study-backup'||value.schema!==1||value.version!==version||value.year!==2026||!Array.isArray(value.progress)||!Array.isArray(value.sessions)||value.progress.length>bank.length||value.sessions.length>100000)fail();
   const integer=(n,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(n)&&n>=0&&n<=max;
   const pids=new Set(),sids=new Set();const clean=blank();
   for(const p of value.progress){if(!p||!byId.has(p.qid)||pids.has(p.qid)||!['total','correct','due'].every(k=>integer(p[k]))||p.correct>p.total||!['last_correct','unsure','bookmark'].every(k=>integer(p[k],1))||!integer(p.stage,3))fail();pids.add(p.qid);clean.progress.push(Object.fromEntries(['qid','total','correct','due','last_correct','unsure','bookmark','stage'].map(k=>[k,p[k]])));}
-  for(const s of value.sessions){if(!s||typeof s.id!=='string'||!/^[a-f0-9-]{36}$/.test(s.id)||sids.has(s.id)||s.version!==version||!['daily','free','review','exam'].includes(s.mode)||!['active','complete'].includes(s.status)||!Array.isArray(s.ids)||!s.ids.length||s.ids.length>bank.length||new Set(s.ids).size!==s.ids.length||!s.ids.every(id=>byId.has(id))||!integer(s.index,s.ids.length-1)||!integer(s.created)||s.mode==='exam'&&(s.ids.length!==50||s.expires!==s.created+3600000)||s.mode!=='exam'&&s.expires!==null||!s.answers||typeof s.answers!=='object'||Array.isArray(s.answers))fail();
+  for(const s of value.sessions){if(!s||typeof s.id!=='string'||!/^[a-f0-9-]{36}$/.test(s.id)||sids.has(s.id)||s.version!==version||!['daily','free','review','exam'].includes(s.mode)||!['active','complete'].includes(s.status)||!Array.isArray(s.ids)||!s.ids.length||s.ids.length>bank.length||new Set(s.ids).size!==s.ids.length||!s.ids.every(id=>byId.has(id))||!integer(s.index,s.ids.length-1)||!integer(s.created)||s.mode==='exam'&&(s.ids.length>50||s.expires!==s.created+3600000)||s.mode!=='exam'&&s.expires!==null||!s.answers||typeof s.answers!=='object'||Array.isArray(s.answers))fail();
    if(s.queue!==undefined&&(s.mode!=='free'||!Array.isArray(s.queue)||s.queue.length+s.ids.length>bank.length||new Set(s.queue).size!==s.queue.length||!s.queue.every(id=>byId.has(id)&&!s.ids.includes(id))))fail();
    const answers={};for(const [id,a] of Object.entries(s.answers)){if(!s.ids.includes(id)||!a||typeof a.unsure!=='boolean'||typeof a.graded!=='boolean'||!(byId.get(id).choices.some(c=>c.label===a.label)||a.label===''&&s.status==='complete')||s.status==='active'&&(s.mode==='exam'?a.graded:!a.graded)||s.status==='complete'&&!a.graded||a.priorStage!==undefined&&(!a.graded||!integer(a.priorStage,3))||a.attempt!==undefined&&(!a.graded||a.priorStage===undefined||!integer(a.attempt)||a.attempt<1))fail();answers[id]={label:a.label,unsure:a.unsure,graded:a.graded,...(a.priorStage!==undefined?{priorStage:a.priorStage}:{}),...(a.attempt!==undefined?{attempt:a.attempt}:{})};}
    if(s.status==='complete'&&(Object.keys(answers).length!==s.ids.length||!integer(s.finished)||s.finished<s.created))fail();sids.add(s.id);clean.sessions.push({id:s.id,mode:s.mode,ids:[...s.ids],answers,index:s.index,status:s.status,created:s.created,expires:s.expires,version,...(s.queue!==undefined?{queue:[...s.queue]}:{}),...(s.status==='complete'?{finished:s.finished}:{})});
