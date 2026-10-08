@@ -13,7 +13,11 @@ assert.deepEqual(book.book.errata,notice.source);
 assert.equal(notice.question_count,37);
 assert.equal(new Set(notice.edits.map(e=>e.qid)).size,37);
 assert.equal(book.questions.filter(q=>q.errata).length,37);
-assert.equal(notice.edits.length,48);
+assert.equal(notice.edits.length,47);
+assert.equal(new Set(notice.edits.map(e=>JSON.stringify([e.qid,e.path]))).size,notice.edits.length,'each corrected field should be listed once');
+// Independently enumerated from all 11 PDF pages, rather than from the edit log itself.
+const expectedTargets={1:[16,38,55,72,84,94,95,103,105],2:[1,9],3:[6],4:[24,43,64,67,73,92],5:[2,7,43],6:[6,16,29],7:[14,29,39,55],8:[40,51,67],10:[27,39],12:[41,42],13:[16,70]};
+assert.deepEqual(book.questions.filter(q=>q.errata).map(q=>`${q.chapter.number}:${Number(q.number_original)}`).sort(),Object.entries(expectedTargets).flatMap(([ch,nums])=>nums.map(n=>`${ch}:${n}`)).sort());
 assert.deepEqual(notice.answer_changes.map(c=>[c.qid,c.from,c.to]),[
  ['kb-2026-v3-ch01-s00-q095','④','①'],
  ['kb-2026-v3-ch01-s00-q103','①','④'],
@@ -46,7 +50,10 @@ assert.ok(cells.some(c=>c.row===4&&c.text==='철회가 불리하나 고객이 �
 for(const choice of q92.choices)assert.equal(choice.table_rows[0].table_id,q92.content[1].id);
 const figures=read('../data/figures.json'),figure=q92.content[1].source_image.split('/').pop();
 assert.deepEqual([...Buffer.from(figures[figure],'base64').subarray(0,8)],[137,80,78,71,13,10,26,10]);
-assert.match(byId.get('kb-2026-v3-ch07-s00-q039').errata.warning,/추가 확인/);
+const corporate39=byId.get('kb-2026-v3-ch07-s00-q039'),previous39=previousById.get(corporate39.id);
+assert.deepEqual(corporate39.answer.labels,['①']);
+for(const key of ['content','choices','explanation','source'])assert.deepEqual(corporate39[key],previous39[key],'corporate 39 changes only its answer');
+assert.equal(corporate39.errata.warning,undefined,'answer-only correction has been confirmed');
 const card16=byId.get('kb-2026-v3-ch06-s00-q016');
 assert.match(card16.choices[2].content[0].text,/1,000포인트리/);
 assert.match(card16.explanation[0].text,/100포인트리/);
@@ -115,6 +122,25 @@ oldEngine.run(active,{action:'answer',session:as.id,qid:changed.qid,label:change
 delete active.sessions[0].answers[changed.qid].correctLabel;
 const activeMigrated=engine.validate(active);
 assert.throws(()=>engine.run(activeMigrated,{action:'unsure',session:as.id,qid:changed.qid,value:true},null,now));
+
+// Text-only corrections must also be reviewed again; untouched questions and bookmarks stay intact.
+const mixed=oldEngine.blank();
+for(const q of previous.questions.filter(q=>byId.get(q.id).errata||q===previous.questions[0])){
+ const s=oldEngine.run(mixed,{action:'start',mode:'free',qid:q.id},null,now);
+ oldEngine.run(mixed,{action:'answer',session:s.id,qid:q.id,label:q.answer.labels[0],unsure:false},null,now);
+ oldEngine.run(mixed,{action:'bookmark',qid:q.id,value:true},null,now);
+ oldEngine.run(mixed,{action:'finish',session:s.id},null,now);
+ for(const a of Object.values(mixed.sessions.at(-1).answers))delete a.correctLabel;
+}
+const bookmarkOnly=previous.questions[1].id;
+oldEngine.run(mixed,{action:'bookmark',qid:bookmarkOnly,value:true},null,now);
+const mixedMigrated=engine.validate(mixed);
+assert.equal(mixedMigrated.progress.filter(p=>p.total&&p.due===0).length,37);
+for(const p of mixed.progress){
+ const expected=byId.get(p.qid).errata&&p.total?{...p,stage:0,due:0}:p;
+ assert.deepEqual(mixedMigrated.progress.find(x=>x.qid===p.qid),expected);
+}
+assert.equal(mixedMigrated.sessions.length,mixed.sessions.length);
 
 const store=createStore(engine,new IDBFactory());
 await store.restore(preMigration);

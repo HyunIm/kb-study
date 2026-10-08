@@ -77,14 +77,35 @@ try{
   await p.goBack();await p.getByRole('heading',{name:'내 기록'}).waitFor();await nav(p,2);
   assert.match(await p.locator('.review-options button').first().textContent(),/1$/);
   pass.push('errata migration, frozen history badges/scores, current key and forced review');}
- // Published errata conflicts are shown after answer reveal, without replacing the source explanation.
- {const p=await page();const q=book.questions.find(q=>q.errata?.warning),state=engine.blank();
+ // Corporate credit 39 changes only the answer; its confirmed correction needs no warning.
+ {const p=await page();const q=book.questions.find(q=>q.id==='kb-2026-v3-ch07-s00-q039'),state=engine.blank();
   const s=engine.run(state,{action:'start',mode:'free',qid:q.id});
   await putRecord(p,'2026',state);await p.goto(base+'?session='+s.id);await p.getByRole('heading',{name:q.number_original+'번',exact:true}).waitFor();
-  assert.equal(await p.getByText(q.errata.warning).count(),0);
-  await p.locator('.choice').first().click();await p.getByRole('button',{name:'정답 확인'}).click();await p.getByText(q.errata.warning).waitFor();
+  assert.equal(await p.getByText('2026-10-08 공지 정오표 반영').count(),0);
+  await p.locator('.choice').first().click();await p.getByRole('button',{name:'정답 확인'}).click();await p.getByText('2026-10-08 공지 정오표 반영').waitFor();
   assert.match(await p.locator('.choice-correct strong').textContent(),/①/);
-  pass.push('errata warning shown only after reveal');}
+  assert.equal(await p.getByRole('alert').count(),0);
+  assert.equal(await p.getByText(/추가 확인/).count(),0);
+  pass.push('confirmed corporate 39 answer and errata notice shown only after reveal');}
+ // The replacement table and downloadable figure must both use the errata, while old evidence is labelled.
+ {const p=await page();const q=book.questions.find(q=>q.id==='kb-2026-v3-ch04-s00-q092'),state=engine.blank();
+  const s=engine.run(state,{action:'start',mode:'free',qid:q.id});
+  await putRecord(p,'2026',state);await p.goto(base+'?session='+s.id);await p.getByRole('heading',{name:'92번',exact:true}).waitFor();
+  const rows=p.locator('.table-block tr');
+  assert.equal(await rows.count(),5);
+  assert.deepEqual(await rows.nth(2).locator('td').allTextContents(),['②','철회가 불리하나 고객이 철회를 요청','등록','대출계약철회권 미행사 일반상환 신청서']);
+  assert.equal(await rows.nth(3).locator('td').nth(2).textContent(),'미등록');
+  await p.locator('.table-block summary').click();
+  const image=p.locator('.table-block img'),src=await image.getAttribute('src');
+  assert.match(src,/q092-errata-20261008\.png$/);
+  assert.equal((await p.request.get(new URL(src,p.url()).href)).status(),200);
+  await image.evaluate(img=>img.decode());
+  const oldFigureQ=book.questions.find(q=>q.id==='kb-2026-v3-ch04-s00-q043'),oldFigureSession=engine.run(state,{action:'start',mode:'free',qid:oldFigureQ.id});
+  await putRecord(p,'2026',state);await p.goto(base+'?session='+oldFigureSession.id);
+  await p.getByRole('heading',{name:'43번',exact:true}).waitFor();
+  await p.getByText('표 원본 보기 (정오표 적용 전)',{exact:true}).waitFor();
+  assert.match(await p.locator('.table-block').textContent(),/연간원리금상환액/);
+  pass.push('errata table text, served replacement PNG, and old evidence label');}
  assert.deepEqual(errors,[],'page errors');
  console.log('PASS (ui): '+pass.join('; '));
 }finally{await browser.close();await server.close();}
