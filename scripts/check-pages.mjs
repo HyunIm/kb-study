@@ -192,3 +192,5 @@ const recovered=createStore(trimEngine,brickFactory);assert.equal((await recover
 await recovered.request({action:'bookmark',qid:book.questions[5].id,value:true},null,now);assert.equal((await recovered.snapshot()).progress.length,1,'store usable after migration left nothing');
 assert.ok(or.id);
 console.log('PASS: migration trims removed questions from sessions and exams, keeps position/answers/queue, stored state recovers when nothing survives');
+
+await import('./check-errata.mjs');

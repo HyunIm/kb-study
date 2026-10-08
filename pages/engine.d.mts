@@ -6,7 +6,7 @@ export type Mode='daily'|'free'|'review'|'exam';
 
 export type CatalogItem={id:string;chapter:Question['chapter'];section:Question['section'];number:string;pages:string[];title:string};
 export type Progress={qid:string;total:number;correct:number;last_correct:0|1;unsure:0|1;stage:number;due:number;bookmark:0|1};
-export type Answer={label:string;unsure:boolean;graded:boolean;priorStage?:number;attempt?:number};
+export type Answer={label:string;unsure:boolean;graded:boolean;correctLabel?:string;priorStage?:number;attempt?:number};
 export type StoredSession={id:string;mode:Mode;ids:string[];answers:Record<string,Answer>;index:number;status:'active'|'complete';created:number;expires:number|null;version:string;queue?:string[];finished?:number};
 export type State={format:'kb-study-backup';schema:1;version:string;year:2026;progress:Progress[];sessions:StoredSession[]};
 

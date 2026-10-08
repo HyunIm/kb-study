@@ -60,6 +60,31 @@ try{
   await putRecord(p,'2026',state);await p.reload();await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();await nav(p,4);
   const rows=p.locator('.result-list button');assert.equal(await rows.count(),20);await p.getByRole('button',{name:'이전 기록 더 보기'}).click();assert.equal(await rows.count(),21);
   pass.push('history paging');}
+ // A corrected key preserves the historical result while the answer panel shows the current key.
+ {const p=await page();const corrected=book.questions.find(q=>q.errata?.previous_answer);
+  const oldBook=structuredClone(book);delete oldBook.book.revision;
+  const oldQ=oldBook.questions.find(q=>q.id===corrected.id);oldQ.answer.labels=[corrected.errata.previous_answer];
+  const oldEngine=createEngine(oldBook),state=oldEngine.blank(),t=Date.now()-86400000;
+  const s=oldEngine.run(state,{action:'start',mode:'free',qid:corrected.id},null,t);
+  oldEngine.run(state,{action:'answer',session:s.id,qid:corrected.id,label:corrected.errata.previous_answer,unsure:false},null,t);
+  oldEngine.run(state,{action:'finish',session:s.id},null,t);
+  delete state.sessions[0].answers[corrected.id].correctLabel;
+  await putRecord(p,'2026',state);await p.reload();await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();await nav(p,4);
+  const history=p.locator('.result-list button');assert.match(await history.first().textContent(),/100점/);await history.first().click();
+  await p.getByRole('heading',{name:'100점',exact:true}).waitFor();assert.equal(await p.locator('.learning-label.correct').count(),1);
+  await p.locator('.result-list button').first().click();await p.getByText(/이 답안은 당시 정답/).waitFor();
+  assert.equal(await p.locator('.choice-correct strong').textContent(),corrected.answer.labels[0]);
+  await p.goBack();await p.getByRole('heading',{name:'내 기록'}).waitFor();await nav(p,2);
+  assert.match(await p.locator('.review-options button').first().textContent(),/1$/);
+  pass.push('errata migration, frozen history badges/scores, current key and forced review');}
+ // Published errata conflicts are shown after answer reveal, without replacing the source explanation.
+ {const p=await page();const q=book.questions.find(q=>q.errata?.warning),state=engine.blank();
+  const s=engine.run(state,{action:'start',mode:'free',qid:q.id});
+  await putRecord(p,'2026',state);await p.goto(base+'?session='+s.id);await p.getByRole('heading',{name:q.number_original+'번',exact:true}).waitFor();
+  assert.equal(await p.getByText(q.errata.warning).count(),0);
+  await p.locator('.choice').first().click();await p.getByRole('button',{name:'정답 확인'}).click();await p.getByText(q.errata.warning).waitFor();
+  assert.match(await p.locator('.choice-correct strong').textContent(),/①/);
+  pass.push('errata warning shown only after reveal');}
  assert.deepEqual(errors,[],'page errors');
  console.log('PASS (ui): '+pass.join('; '));
 }finally{await browser.close();await server.close();}
