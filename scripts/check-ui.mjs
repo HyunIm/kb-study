@@ -12,7 +12,7 @@ const base=server.resolvedUrls.local[0];
 const browser=await chromium.launch();
 const errors=[];
 async function page(){const p=await (await browser.newContext({viewport:{width:390,height:844}})).newPage();p.on('pageerror',e=>errors.push(e.message));await p.goto(base);await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();return p;}
-const putRecord=(p,key,value)=>p.evaluate(([key,value])=>new Promise((res,rej)=>{const o=indexedDB.open('kb-study-local',1);o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite'),st=tx.objectStore('books');st.delete('2026');if(value!==null)st.put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;}),[key,value]);
+const putRecord=(p,key,value)=>p.evaluate(([key,value])=>new Promise((res,rej)=>{const o=indexedDB.open('kb-study-local');o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite'),st=tx.objectStore('books');st.delete('2026');if(value!==null)st.put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;}),[key,value]);
 const nav=(p,i)=>p.locator('.app-nav button').nth(i).click();
 const pass=[];
 try{

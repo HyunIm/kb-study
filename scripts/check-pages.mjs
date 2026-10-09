@@ -162,7 +162,7 @@ const migrated=engine.validate(gone);assert.equal(migrated.progress.length,backu
 const sameVersionGone=structuredClone(gone);sameVersionGone.version=engine.version;for(const x of sameVersionGone.sessions)x.version=engine.version;assert.throws(()=>engine.validate(sameVersionGone),'current version stays strict');
 assert.throws(()=>engine.validate({...blankOther(),progress:[{...backup.progress[0],qid:'kb-removed-question'}]}),'nothing compatible');
 function blankOther(){return {...engine.blank(),version:'other-book'};}
-const putRaw=(factory,key,value)=>new Promise((res,rej)=>{const o=factory.open('kb-study-local',1);o.onupgradeneeded=()=>o.result.createObjectStore('books');o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite');tx.objectStore('books').put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;});
+const putRaw=(factory,key,value)=>new Promise((res,rej)=>{const o=factory.open('kb-study-local');o.onupgradeneeded=()=>o.result.createObjectStore('books');o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite');tx.objectStore('books').put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;});
 const legacyFactory=new IDBFactory();await putRaw(legacyFactory,'2026:'+engine.version,backup);
 assert.deepEqual(engine.validate(await createStore(engine,legacyFactory).snapshot()),backup,'legacy key not migrated');
 const changedBook={...book,book:{...book.book,sha256:'next-'+book.book.sha256}},nextEngine=createEngine(changedBook);assert.notEqual(nextEngine.version,engine.version);
@@ -194,3 +194,11 @@ assert.ok(or.id);
 console.log('PASS: migration trims removed questions from sessions and exams, keeps position/answers/queue, stored state recovers when nothing survives');
 
 await import('./check-errata.mjs');
+
+// Builds before the errata open the database at version 1 and drop correctLabel when they write.
+// Once this build has opened it, such an old tab must fail instead of rewriting the record.
+{const factory=new IDBFactory(),store=createStore(engine,factory);await store.snapshot();
+ const oldOpen=await new Promise(res=>{const o=factory.open('kb-study-local',1);o.onsuccess=()=>{o.result.close();res('opened');};o.onerror=()=>res(o.error?.name);});
+ assert.equal(oldOpen,'VersionError','old build can still open and overwrite the record');
+ const upgraded=new IDBFactory();await putRaw(upgraded,'2026',backup);assert.deepEqual(engine.validate(await createStore(engine,upgraded).snapshot()),backup,'version 1 database not carried over');
+ console.log('PASS: database version blocks pre-errata tabs, version 1 records carried over');}
