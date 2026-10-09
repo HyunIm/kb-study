@@ -74,6 +74,8 @@ try{
   await p.getByRole('heading',{name:'100점',exact:true}).waitFor();assert.equal(await p.locator('.learning-label.correct').count(),1);
   await p.locator('.result-list button').first().click();await p.getByText(/이 답안은 당시 정답/).waitFor();
   assert.equal(await p.locator('.choice-correct strong').textContent(),corrected.answer.labels[0]);
+  // The verdict follows the key it was graded with, matching the history badge; the chosen answer is not painted wrong.
+  assert.match(await p.locator('[class=success] h3').first().textContent(),/^맞았어요/);assert.equal(await p.locator('.choice-wrong').count(),0);
   await p.goBack();await p.getByRole('heading',{name:'내 기록'}).waitFor();await nav(p,2);
   assert.match(await p.locator('.review-options button').first().textContent(),/1$/);
   pass.push('errata migration, frozen history badges/scores, current key and forced review');}
