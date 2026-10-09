@@ -175,7 +175,10 @@ console.log('PASS: data version migration by question id, strict current version
 // Migration trims removed questions out of sessions instead of dropping them, and stored state never bricks.
 const keepQ=book.questions.slice(60,63).map(q=>q.id),trimState=engine.blank(),tr=cmd=>engine.run(trimState,cmd,null,now);
 const ts=tr({action:'start',mode:'free',qid:keepQ[0],followIds:keepQ});const tq=book.questions[60];tr({action:'answer',session:ts.id,qid:tq.id,label:tq.answer.labels[0],unsure:false});
-const te=tr({action:'start',mode:'exam'});tr({action:'answer',session:te.id,qid:te.ids[1],label:'①',unsure:false});
+const te=tr({action:'start',mode:'exam'});
+// This migration fixture must not randomly overlap the separately removed free-session question.
+te.ids=book.questions.slice(0,50).map(q=>q.id);trimState.sessions.find(s=>s.id===te.id).ids=[...te.ids];
+tr({action:'answer',session:te.id,qid:te.ids[1],label:'①',unsure:false});
 const removed=new Set([te.ids[0],keepQ[2]]);
 const trimBook={...book,book:{...book.book,sha256:'trim-'+book.book.sha256}};
 const trimEngine=createEngine({...trimBook,questions:book.questions.filter(q=>!removed.has(q.id))});

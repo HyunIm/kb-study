@@ -54,6 +54,11 @@ const corporate39=byId.get('kb-2026-v3-ch07-s00-q039'),previous39=previousById.g
 assert.deepEqual(corporate39.answer.labels,['①']);
 for(const key of ['content','choices','explanation','source'])assert.deepEqual(corporate39[key],previous39[key],'corporate 39 changes only its answer');
 assert.equal(corporate39.errata.warning,undefined,'answer-only correction has been confirmed');
+// PDF pages 1–2 strike out the entire old explanation, including ③ and ④.
+// This source expectation must remain independent of the editable audit log.
+const deposit55=byId.get('kb-2026-v3-ch01-s00-q055');
+assert.deepEqual(deposit55.explanation,[{type:'text',text:'① 당행서식(전자서식) 이외의 별도서식으로 질권설정 승낙을 요청하는 경우에는 설정계약내용을 면밀히 검토하여 승낙하고 영업점장의 결재를 받아야 함'}],'deposit 55 must not restore explanations deleted by the errata');
+assert.deepEqual(deposit55.answer.labels,['②']);
 const card16=byId.get('kb-2026-v3-ch06-s00-q016');
 assert.match(card16.choices[2].content[0].text,/1,000포인트리/);
 assert.match(card16.explanation[0].text,/100포인트리/);
