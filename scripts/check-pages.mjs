@@ -162,7 +162,7 @@ const migrated=engine.validate(gone);assert.equal(migrated.progress.length,backu
 const sameVersionGone=structuredClone(gone);sameVersionGone.version=engine.version;for(const x of sameVersionGone.sessions)x.version=engine.version;assert.throws(()=>engine.validate(sameVersionGone),'current version stays strict');
 assert.throws(()=>engine.validate({...blankOther(),progress:[{...backup.progress[0],qid:'kb-removed-question'}]}),'nothing compatible');
 function blankOther(){return {...engine.blank(),version:'other-book'};}
-const putRaw=(factory,key,value)=>new Promise((res,rej)=>{const o=factory.open('kb-study-local',1);o.onupgradeneeded=()=>o.result.createObjectStore('books');o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite');tx.objectStore('books').put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;});
+const putRaw=(factory,key,value)=>new Promise((res,rej)=>{const o=factory.open('kb-study-local');o.onupgradeneeded=()=>o.result.createObjectStore('books');o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite');tx.objectStore('books').put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;});
 const legacyFactory=new IDBFactory();await putRaw(legacyFactory,'2026:'+engine.version,backup);
 assert.deepEqual(engine.validate(await createStore(engine,legacyFactory).snapshot()),backup,'legacy key not migrated');
 const changedBook={...book,book:{...book.book,sha256:'next-'+book.book.sha256}},nextEngine=createEngine(changedBook);assert.notEqual(nextEngine.version,engine.version);
@@ -175,7 +175,10 @@ console.log('PASS: data version migration by question id, strict current version
 // Migration trims removed questions out of sessions instead of dropping them, and stored state never bricks.
 const keepQ=book.questions.slice(60,63).map(q=>q.id),trimState=engine.blank(),tr=cmd=>engine.run(trimState,cmd,null,now);
 const ts=tr({action:'start',mode:'free',qid:keepQ[0],followIds:keepQ});const tq=book.questions[60];tr({action:'answer',session:ts.id,qid:tq.id,label:tq.answer.labels[0],unsure:false});
-const te=tr({action:'start',mode:'exam'});tr({action:'answer',session:te.id,qid:te.ids[1],label:'①',unsure:false});
+const te=tr({action:'start',mode:'exam'});
+// This migration fixture must not randomly overlap the separately removed free-session question.
+te.ids=book.questions.slice(0,50).map(q=>q.id);trimState.sessions.find(s=>s.id===te.id).ids=[...te.ids];
+tr({action:'answer',session:te.id,qid:te.ids[1],label:'①',unsure:false});
 const removed=new Set([te.ids[0],keepQ[2]]);
 const trimBook={...book,book:{...book.book,sha256:'trim-'+book.book.sha256}};
 const trimEngine=createEngine({...trimBook,questions:book.questions.filter(q=>!removed.has(q.id))});
@@ -192,3 +195,13 @@ const recovered=createStore(trimEngine,brickFactory);assert.equal((await recover
 await recovered.request({action:'bookmark',qid:book.questions[5].id,value:true},null,now);assert.equal((await recovered.snapshot()).progress.length,1,'store usable after migration left nothing');
 assert.ok(or.id);
 console.log('PASS: migration trims removed questions from sessions and exams, keeps position/answers/queue, stored state recovers when nothing survives');
+
+await import('./check-errata.mjs');
+
+// Builds before the errata open the database at version 1 and drop correctLabel when they write.
+// Once this build has opened it, such an old tab must fail instead of rewriting the record.
+{const factory=new IDBFactory(),store=createStore(engine,factory);await store.snapshot();
+ const oldOpen=await new Promise(res=>{const o=factory.open('kb-study-local',1);o.onsuccess=()=>{o.result.close();res('opened');};o.onerror=()=>res(o.error?.name);});
+ assert.equal(oldOpen,'VersionError','old build can still open and overwrite the record');
+ const upgraded=new IDBFactory();await putRaw(upgraded,'2026',backup);assert.deepEqual(engine.validate(await createStore(engine,upgraded).snapshot()),backup,'version 1 database not carried over');
+ console.log('PASS: database version blocks pre-errata tabs, version 1 records carried over');}

@@ -12,7 +12,7 @@ const base=server.resolvedUrls.local[0];
 const browser=await chromium.launch();
 const errors=[];
 async function page(){const p=await (await browser.newContext({viewport:{width:390,height:844}})).newPage();p.on('pageerror',e=>errors.push(e.message));await p.goto(base);await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();return p;}
-const putRecord=(p,key,value)=>p.evaluate(([key,value])=>new Promise((res,rej)=>{const o=indexedDB.open('kb-study-local',1);o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite'),st=tx.objectStore('books');st.delete('2026');if(value!==null)st.put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;}),[key,value]);
+const putRecord=(p,key,value)=>p.evaluate(([key,value])=>new Promise((res,rej)=>{const o=indexedDB.open('kb-study-local');o.onsuccess=()=>{const tx=o.result.transaction('books','readwrite'),st=tx.objectStore('books');st.delete('2026');if(value!==null)st.put(value,key);tx.oncomplete=()=>{o.result.close();res();};tx.onerror=rej;};o.onerror=rej;}),[key,value]);
 const nav=(p,i)=>p.locator('.app-nav button').nth(i).click();
 const pass=[];
 try{
@@ -35,7 +35,9 @@ try{
  // Catalog renders in pages of 50 and keeps its length and scroll after returning from a question.
  {const p=await page();await nav(p,1);
   assert.equal(await p.locator('.catalog button').count(),50);
-  await p.getByRole('button',{name:/문제 더 보기/}).click();assert.equal(await p.locator('.catalog button').count(),100);
+  await p.getByRole('button',{name:/문제 더 보기/}).click();
+  // Scrolling to the button can also trigger auto-load, so more than 100 rows is valid.
+  await p.waitForFunction(()=>document.querySelectorAll('.catalog button').length>=100);
   await p.locator('.list-more').scrollIntoViewIfNeeded();await p.waitForFunction(()=>document.querySelectorAll('.catalog button').length>=150);
   await p.locator('.catalog button').nth(120).click();await p.waitForURL(/session=/);
   await p.goBack();await p.locator('.catalog').waitFor();await p.waitForTimeout(200);
@@ -60,6 +62,61 @@ try{
   await putRecord(p,'2026',state);await p.reload();await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();await nav(p,4);
   const rows=p.locator('.result-list button');assert.equal(await rows.count(),20);await p.getByRole('button',{name:'이전 기록 더 보기'}).click();assert.equal(await rows.count(),21);
   pass.push('history paging');}
+ // Historical correct, newly-correct and unanswered selections must keep their original verdict.
+ for(const selection of ['previous','current','unanswered']){const p=await page();const corrected=book.questions.find(q=>q.errata?.previous_answer);
+  const oldBook=structuredClone(book);delete oldBook.book.revision;
+  const oldQ=oldBook.questions.find(q=>q.id===corrected.id);oldQ.answer.labels=[corrected.errata.previous_answer];
+  const oldEngine=createEngine(oldBook),state=oldEngine.blank(),t=Date.now()-86400000;
+  const s=oldEngine.run(state,{action:'start',mode:'free',qid:corrected.id},null,t);
+  if(selection!=='unanswered')oldEngine.run(state,{action:'answer',session:s.id,qid:corrected.id,label:selection==='previous'?corrected.errata.previous_answer:corrected.answer.labels[0],unsure:false},null,t);
+  oldEngine.run(state,{action:'finish',session:s.id},null,t);
+  delete state.sessions[0].answers[corrected.id].correctLabel;
+  await putRecord(p,'2026',state);await p.reload();await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();await nav(p,4);
+  const score=selection==='previous'?100:0,verdict=selection==='previous'?'정답':selection==='current'?'오답':'미응답';
+  const history=p.locator('.result-list button');assert.match(await history.first().textContent(),new RegExp(score+'점'));await history.first().click();
+  await p.getByRole('heading',{name:score+'점',exact:true}).waitFor();
+  assert.equal(await p.locator('.learning-label.correct').count(),selection==='previous'?1:0);
+  assert.equal(await p.locator('.result-list .learning-label').textContent(),verdict);
+  await p.locator('.result-list button').first().click();await p.getByText(/이 답안은 당시 정답/).waitFor();
+  assert.equal(await p.locator('.choice-correct strong').textContent(),corrected.answer.labels[0]);
+  const heading=p.getByRole('heading',{name:'당시 채점 결과: '+verdict,exact:true});await heading.waitFor();
+  assert.equal(await heading.evaluate(el=>el.parentElement.className),selection==='previous'?'success':'answer-note');
+  assert.equal(await p.locator('.choice-correct .correct-choice-label').textContent(),'현재 정답');
+  assert.equal(await p.locator('.choice-wrong').count(),0);
+  assert.equal(await p.getByText(/맞았어요/).count(),0,'historical result must not be confused with the current key');
+  assert.match(await p.getByRole('status').textContent(),new RegExp('당시 정답 '+corrected.errata.previous_answer+'.*현재 정답은 '+corrected.answer.labels[0]));
+  await p.goBack();await p.getByRole('heading',{name:'내 기록'}).waitFor();await nav(p,2);
+  assert.match(await p.locator('.review-options button').first().textContent(),/1$/);
+  pass.push('errata migration, frozen '+selection+' verdict/score, separate current key and forced review');}
+ // Corporate credit 39 changes only the answer; its confirmed correction needs no warning.
+ {const p=await page();const q=book.questions.find(q=>q.id==='kb-2026-v3-ch07-s00-q039'),state=engine.blank();
+  const s=engine.run(state,{action:'start',mode:'free',qid:q.id});
+  await putRecord(p,'2026',state);await p.goto(base+'?session='+s.id);await p.getByRole('heading',{name:q.number_original+'번',exact:true}).waitFor();
+  assert.equal(await p.getByText('2026-10-08 공지 정오표 반영').count(),0);
+  await p.locator('.choice').first().click();await p.getByRole('button',{name:'정답 확인'}).click();await p.getByText('2026-10-08 공지 정오표 반영').waitFor();
+  assert.match(await p.locator('.choice-correct strong').textContent(),/①/);
+  assert.equal(await p.getByRole('alert').count(),0);
+  assert.equal(await p.getByText(/추가 확인/).count(),0);
+  pass.push('confirmed corporate 39 answer and errata notice shown only after reveal');}
+ // The replacement table and downloadable figure must both use the errata, while old evidence is labelled.
+ {const p=await page();const q=book.questions.find(q=>q.id==='kb-2026-v3-ch04-s00-q092'),state=engine.blank();
+  const s=engine.run(state,{action:'start',mode:'free',qid:q.id});
+  await putRecord(p,'2026',state);await p.goto(base+'?session='+s.id);await p.getByRole('heading',{name:'92번',exact:true}).waitFor();
+  const rows=p.locator('.table-block tr');
+  assert.equal(await rows.count(),5);
+  assert.deepEqual(await rows.nth(2).locator('td').allTextContents(),['②','철회가 불리하나 고객이 철회를 요청','등록','대출계약철회권 미행사 일반상환 신청서']);
+  assert.equal(await rows.nth(3).locator('td').nth(2).textContent(),'미등록');
+  await p.locator('.table-block summary').click();
+  const image=p.locator('.table-block img'),src=await image.getAttribute('src');
+  assert.match(src,/q092-errata-20261008\.png$/);
+  assert.equal((await p.request.get(new URL(src,p.url()).href)).status(),200);
+  await image.evaluate(img=>img.decode());
+  const oldFigureQ=book.questions.find(q=>q.id==='kb-2026-v3-ch04-s00-q043'),oldFigureSession=engine.run(state,{action:'start',mode:'free',qid:oldFigureQ.id});
+  await putRecord(p,'2026',state);await p.goto(base+'?session='+oldFigureSession.id);
+  await p.getByRole('heading',{name:'43번',exact:true}).waitFor();
+  await p.getByText('표 원본 보기 (정오표 적용 전)',{exact:true}).waitFor();
+  assert.match(await p.locator('.table-block').textContent(),/연간원리금상환액/);
+  pass.push('errata table text, served replacement PNG, and old evidence label');}
  assert.deepEqual(errors,[],'page errors');
  console.log('PASS (ui): '+pass.join('; '));
 }finally{await browser.close();await server.close();}

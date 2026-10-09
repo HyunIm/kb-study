@@ -4,15 +4,18 @@ export const matchesSearch=(item,query)=>!query||[item.title,item.number,...item
 export const matchesReview=(p,filter,now)=>!!p&&!!(filter==='bookmark'?p.bookmark:filter==='wrong'?p.total&&!p.last_correct:filter==='unsure'?p.unsure:p.total&&p.due<=now);
 export function createEngine(book) {
  const bank=book.questions, byId=new Map(bank.map(q=>[q.id,q]));
- const version=book.book.sha256+'-credit-card-11-confirmed-1';
+ const originalVersion=book.book.sha256+'-credit-card-11-confirmed-1';
+ const version=originalVersion+(book.book.revision?'-'+book.book.revision:'');
  const catalog=bank.map(q=>({id:q.id,chapter:q.chapter,section:q.section,number:q.number_original,pages:q.source.printed_pages,title:q.content.filter(b=>b.type==='text').map(b=>b.text).join(' ').slice(0,160)}));
  const blank=()=>({format:'kb-study-backup',schema:1,version,year:2026,progress:[],sessions:[]});
  const shuffle=items=>{const a=[...items];for(let i=a.length-1;i>0;i--){const n=new Uint32Array(1);crypto.getRandomValues(n);const j=Math.floor(n[0]/4294967296*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
- const question=(id,reveal)=>{const q=byId.get(id);const {answer,explanation,...rest}=q;return reveal?q:rest;};
- const score=s=>s.ids.filter(id=>s.answers[id]?.label===byId.get(id).answer?.labels?.[0]).length*100/s.ids.length;
+ const question=(id,reveal)=>{const q=byId.get(id);const {answer,explanation,errata,...rest}=q;return reveal?q:rest;};
+ // Freeze the grading key so corrections cannot silently rewrite a historical score.
+ const answerKey=(s,id)=>s.answers[id]?.correctLabel??byId.get(id).answer?.labels?.[0];
+ const score=s=>s.ids.filter(id=>s.answers[id]?.label===answerKey(s,id)).length*100/s.ids.length;
  const payload=(s,now)=>({...s,questions:s.ids.map(id=>question(id,s.status==='complete'||s.mode!=='exam'&&s.answers[id]?.graded)),score:s.status==='complete'?score(s):null,serverTime:now});
  function progress(state,id){let p=state.progress.find(p=>p.qid===id);if(!p){p={qid:id,total:0,correct:0,last_correct:0,unsure:0,stage:0,due:0,bookmark:0};state.progress.push(p);}return p;}
- function grade(state,s,id,now){const a=s.answers[id]||{label:'',unsure:false,graded:false};if(a.graded)return;const p=progress(state,id);const correct=a.label===byId.get(id).answer?.labels?.[0]?1:0;p.total++;p.correct+=correct;p.last_correct=correct;p.unsure=a.unsure?1:0;const priorStage=p.stage;p.stage=correct&&!a.unsure?Math.min(p.stage+1,3):0;p.due=now+[1,3,7,14][p.stage]*86400000;s.answers[id]={...a,graded:true,priorStage,attempt:p.total};}
+ function grade(state,s,id,now){const a=s.answers[id]||{label:'',unsure:false,graded:false};if(a.graded)return;const p=progress(state,id);const correctLabel=byId.get(id).answer?.labels?.[0],correct=a.label===correctLabel?1:0;p.total++;p.correct+=correct;p.last_correct=correct;p.unsure=a.unsure?1:0;const priorStage=p.stage;p.stage=correct&&!a.unsure?Math.min(p.stage+1,3):0;p.due=now+[1,3,7,14][p.stage]*86400000;s.answers[id]={...a,graded:true,correctLabel,priorStage,attempt:p.total};}
  function finish(state,s,now){if(s.status==='complete')return;for(const id of s.ids)grade(state,s,id,now);s.status='complete';s.finished=now;}
  function examIds(){const quotas=book.book.chapters.map(ch=>{const exact=bank.filter(q=>q.chapter.number===ch.number).length/bank.length*50;return {chapter:ch.number,exact,n:Math.floor(exact)};});let left=50-quotas.reduce((n,q)=>n+q.n,0);for(const q of [...quotas].sort((a,b)=>(b.exact-b.n)-(a.exact-a.n)||a.chapter-b.chapter)){if(left-->0)q.n++;}return shuffle(quotas.flatMap(q=>shuffle(bank.filter(b=>b.chapter.number===q.chapter)).slice(0,q.n).map(q=>q.id)));}
  function run(state,input,id,now=Date.now()){
@@ -20,7 +23,7 @@ export function createEngine(book) {
   if(!input){if(id){const s=state.sessions.find(s=>s.id===id);if(!s)throw Error('이 기기에서 학습 기록을 찾을 수 없습니다.');return payload(s,now);}return {authMode:'local',catalog,progress:state.progress,sessions:[...state.sessions].sort((a,b)=>b.created-a.created).map(s=>({id:s.id,mode:s.mode,status:s.status,count:s.ids.length,currentChapter:byId.get(s.ids[s.index])?.chapter.title,created:s.created,answered:Object.keys(s.answers).length,score:s.status==='complete'?score(s):null}))};}
   if(input.action==='start'){
    const mode=['daily','free','review','exam'].includes(input.mode)?input.mode:'daily';let ids;
-   if(input.retryOf){const prior=state.sessions.find(s=>s.id===input.retryOf);if(!prior||prior.status!=='complete'||mode!=='free')throw Error('완료된 학습에서만 오답을 다시 풀 수 있습니다.');ids=prior.ids.filter(id=>prior.answers[id]?.label!==byId.get(id).answer?.labels?.[0]);}
+   if(input.retryOf){const prior=state.sessions.find(s=>s.id===input.retryOf);if(!prior||prior.status!=='complete'||mode!=='free')throw Error('완료된 학습에서만 오답을 다시 풀 수 있습니다.');ids=prior.ids.filter(id=>prior.answers[id]?.label!==answerKey(prior,id));}
    else if(mode==='exam')ids=examIds();else if(input.qid&&byId.has(input.qid))ids=[input.qid];else{
     const map=new Map(state.progress.map(p=>[p.qid,p]));let pool=bank.filter(q=>(!input.chapter||q.chapter.number===Number(input.chapter))&&(!input.section||q.section?.id===input.section));
     if(mode==='free'&&input.unseenOnly===true)pool=pool.filter(q=>!map.get(q.id)?.total);
@@ -54,13 +57,21 @@ export function createEngine(book) {
  function trimSession(s){
   if(!s||!Array.isArray(s.ids))return s;
   const ids=s.ids.filter(id=>byId.has(id)),current=s.ids[s.index],before=s.ids.slice(0,Number(s.index)||0).filter(id=>byId.has(id)).length;
-  const answers=s.answers&&typeof s.answers==='object'&&!Array.isArray(s.answers)?Object.fromEntries(Object.entries(s.answers).filter(([id])=>ids.includes(id))):s.answers;
+  const fromOriginal=book.book.revision&&s.version===originalVersion;
+  const answers=s.answers&&typeof s.answers==='object'&&!Array.isArray(s.answers)?Object.fromEntries(Object.entries(s.answers).filter(([id])=>ids.includes(id)).map(([id,a])=>{
+   if(!a||typeof a!=='object'||!a.graded)return [id,a];
+   const q=byId.get(id),copy={...a,correctLabel:a.correctLabel??(fromOriginal?q.errata?.previous_answer:undefined)??q.answer?.labels?.[0]};
+   // An old revealed answer must not restore a schedule invalidated by corrected content.
+   if(fromOriginal&&q.errata){delete copy.priorStage;delete copy.attempt;}
+   return [id,copy];
+  })):s.answers;
   return {...s,version,ids,answers,index:byId.has(current)?ids.indexOf(current):Math.min(before,Math.max(ids.length-1,0)),...(Array.isArray(s.queue)?{queue:s.queue.filter(id=>byId.has(id)&&!ids.includes(id))}:{})};
  }
  function migrate(value,fromStore){
   if(!value||typeof value.version!=='string'||value.version===version||!Array.isArray(value.progress)||!Array.isArray(value.sessions))return value;
   const keeps=(progress,sessions)=>{try{check({...value,version,progress,sessions});return true;}catch{return false;}};
-  const migrated={...value,version,progress:value.progress.filter(p=>keeps([p],[])),sessions:value.sessions.map(trimSession).filter(s=>keeps([],[s]))};
+  const fromOriginal=book.book.revision&&value.version===originalVersion;
+  const migrated={...value,version,progress:value.progress.filter(p=>keeps([p],[])).map(p=>fromOriginal&&p.total&&byId.get(p.qid)?.errata?{...p,stage:0,due:0}:p),sessions:value.sessions.map(trimSession).filter(s=>keeps([],[s]))};
   // A backup with nothing usable is refused; records already on this device fall back to what survived, even if empty.
   if(!fromStore&&!migrated.progress.length&&!migrated.sessions.length&&(value.progress.length||value.sessions.length))throw Error('이 문제집과 호환되는 기록이 없는 백업입니다. 기존 기록은 변경하지 않았습니다.');
   return migrated;
@@ -74,7 +85,7 @@ export function createEngine(book) {
   for(const p of value.progress){if(!p||!byId.has(p.qid)||pids.has(p.qid)||!['total','correct','due'].every(k=>integer(p[k]))||p.correct>p.total||!['last_correct','unsure','bookmark'].every(k=>integer(p[k],1))||!integer(p.stage,3))fail();pids.add(p.qid);clean.progress.push(Object.fromEntries(['qid','total','correct','due','last_correct','unsure','bookmark','stage'].map(k=>[k,p[k]])));}
   for(const s of value.sessions){if(!s||typeof s.id!=='string'||!/^[a-f0-9-]{36}$/.test(s.id)||sids.has(s.id)||s.version!==version||!['daily','free','review','exam'].includes(s.mode)||!['active','complete'].includes(s.status)||!Array.isArray(s.ids)||!s.ids.length||s.ids.length>bank.length||new Set(s.ids).size!==s.ids.length||!s.ids.every(id=>byId.has(id))||!integer(s.index,s.ids.length-1)||!integer(s.created)||s.mode==='exam'&&(s.ids.length>50||s.expires!==s.created+3600000)||s.mode!=='exam'&&s.expires!==null||!s.answers||typeof s.answers!=='object'||Array.isArray(s.answers))fail();
    if(s.queue!==undefined&&(s.mode!=='free'||!Array.isArray(s.queue)||s.queue.length+s.ids.length>bank.length||new Set(s.queue).size!==s.queue.length||!s.queue.every(id=>byId.has(id)&&!s.ids.includes(id))))fail();
-   const answers={};for(const [id,a] of Object.entries(s.answers)){if(!s.ids.includes(id)||!a||typeof a.unsure!=='boolean'||typeof a.graded!=='boolean'||!(byId.get(id).choices.some(c=>c.label===a.label)||a.label===''&&s.status==='complete')||s.status==='active'&&(s.mode==='exam'?a.graded:!a.graded)||s.status==='complete'&&!a.graded||a.priorStage!==undefined&&(!a.graded||!integer(a.priorStage,3))||a.attempt!==undefined&&(!a.graded||a.priorStage===undefined||!integer(a.attempt)||a.attempt<1))fail();answers[id]={label:a.label,unsure:a.unsure,graded:a.graded,...(a.priorStage!==undefined?{priorStage:a.priorStage}:{}),...(a.attempt!==undefined?{attempt:a.attempt}:{})};}
+   const answers={};for(const [id,a] of Object.entries(s.answers)){if(!s.ids.includes(id)||!a||typeof a.unsure!=='boolean'||typeof a.graded!=='boolean'||!(byId.get(id).choices.some(c=>c.label===a.label)||a.label===''&&s.status==='complete')||s.status==='active'&&(s.mode==='exam'?a.graded:!a.graded)||s.status==='complete'&&!a.graded||a.priorStage!==undefined&&(!a.graded||!integer(a.priorStage,3))||a.attempt!==undefined&&(!a.graded||a.priorStage===undefined||!integer(a.attempt)||a.attempt<1)||a.correctLabel!==undefined&&(!a.graded||!byId.get(id).choices.some(c=>c.label===a.correctLabel)))fail();answers[id]={label:a.label,unsure:a.unsure,graded:a.graded,...(a.correctLabel!==undefined?{correctLabel:a.correctLabel}:{}),...(a.priorStage!==undefined?{priorStage:a.priorStage}:{}),...(a.attempt!==undefined?{attempt:a.attempt}:{})};}
    if(s.status==='complete'&&(Object.keys(answers).length!==s.ids.length||!integer(s.finished)||s.finished<s.created))fail();sids.add(s.id);clean.sessions.push({id:s.id,mode:s.mode,ids:[...s.ids],answers,index:s.index,status:s.status,created:s.created,expires:s.expires,version,...(s.queue!==undefined?{queue:[...s.queue]}:{}),...(s.status==='complete'?{finished:s.finished}:{})});
   }return clean;
  }
