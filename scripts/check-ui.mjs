@@ -35,7 +35,9 @@ try{
  // Catalog renders in pages of 50 and keeps its length and scroll after returning from a question.
  {const p=await page();await nav(p,1);
   assert.equal(await p.locator('.catalog button').count(),50);
-  await p.getByRole('button',{name:/문제 더 보기/}).click();assert.equal(await p.locator('.catalog button').count(),100);
+  await p.getByRole('button',{name:/문제 더 보기/}).click();
+  // Scrolling to the button can also trigger auto-load, so more than 100 rows is valid.
+  await p.waitForFunction(()=>document.querySelectorAll('.catalog button').length>=100);
   await p.locator('.list-more').scrollIntoViewIfNeeded();await p.waitForFunction(()=>document.querySelectorAll('.catalog button').length>=150);
   await p.locator('.catalog button').nth(120).click();await p.waitForURL(/session=/);
   await p.goBack();await p.locator('.catalog').waitFor();await p.waitForTimeout(200);
@@ -60,25 +62,32 @@ try{
   await putRecord(p,'2026',state);await p.reload();await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();await nav(p,4);
   const rows=p.locator('.result-list button');assert.equal(await rows.count(),20);await p.getByRole('button',{name:'이전 기록 더 보기'}).click();assert.equal(await rows.count(),21);
   pass.push('history paging');}
- // A corrected key preserves the historical result while the answer panel shows the current key.
- {const p=await page();const corrected=book.questions.find(q=>q.errata?.previous_answer);
+ // Historical correct, newly-correct and unanswered selections must keep their original verdict.
+ for(const selection of ['previous','current','unanswered']){const p=await page();const corrected=book.questions.find(q=>q.errata?.previous_answer);
   const oldBook=structuredClone(book);delete oldBook.book.revision;
   const oldQ=oldBook.questions.find(q=>q.id===corrected.id);oldQ.answer.labels=[corrected.errata.previous_answer];
   const oldEngine=createEngine(oldBook),state=oldEngine.blank(),t=Date.now()-86400000;
   const s=oldEngine.run(state,{action:'start',mode:'free',qid:corrected.id},null,t);
-  oldEngine.run(state,{action:'answer',session:s.id,qid:corrected.id,label:corrected.errata.previous_answer,unsure:false},null,t);
+  if(selection!=='unanswered')oldEngine.run(state,{action:'answer',session:s.id,qid:corrected.id,label:selection==='previous'?corrected.errata.previous_answer:corrected.answer.labels[0],unsure:false},null,t);
   oldEngine.run(state,{action:'finish',session:s.id},null,t);
   delete state.sessions[0].answers[corrected.id].correctLabel;
   await putRecord(p,'2026',state);await p.reload();await p.getByRole('heading',{name:'오늘의 학습'}).waitFor();await nav(p,4);
-  const history=p.locator('.result-list button');assert.match(await history.first().textContent(),/100점/);await history.first().click();
-  await p.getByRole('heading',{name:'100점',exact:true}).waitFor();assert.equal(await p.locator('.learning-label.correct').count(),1);
+  const score=selection==='previous'?100:0,verdict=selection==='previous'?'정답':selection==='current'?'오답':'미응답';
+  const history=p.locator('.result-list button');assert.match(await history.first().textContent(),new RegExp(score+'점'));await history.first().click();
+  await p.getByRole('heading',{name:score+'점',exact:true}).waitFor();
+  assert.equal(await p.locator('.learning-label.correct').count(),selection==='previous'?1:0);
+  assert.equal(await p.locator('.result-list .learning-label').textContent(),verdict);
   await p.locator('.result-list button').first().click();await p.getByText(/이 답안은 당시 정답/).waitFor();
   assert.equal(await p.locator('.choice-correct strong').textContent(),corrected.answer.labels[0]);
-  // The verdict follows the key it was graded with, matching the history badge; the chosen answer is not painted wrong.
-  assert.match(await p.locator('[class=success] h3').first().textContent(),/^맞았어요/);assert.equal(await p.locator('.choice-wrong').count(),0);
+  const heading=p.getByRole('heading',{name:'당시 채점 결과: '+verdict,exact:true});await heading.waitFor();
+  assert.equal(await heading.evaluate(el=>el.parentElement.className),selection==='previous'?'success':'answer-note');
+  assert.equal(await p.locator('.choice-correct .correct-choice-label').textContent(),'현재 정답');
+  assert.equal(await p.locator('.choice-wrong').count(),0);
+  assert.equal(await p.getByText(/맞았어요/).count(),0,'historical result must not be confused with the current key');
+  assert.match(await p.getByRole('status').textContent(),new RegExp('당시 정답 '+corrected.errata.previous_answer+'.*현재 정답은 '+corrected.answer.labels[0]));
   await p.goBack();await p.getByRole('heading',{name:'내 기록'}).waitFor();await nav(p,2);
   assert.match(await p.locator('.review-options button').first().textContent(),/1$/);
-  pass.push('errata migration, frozen history badges/scores, current key and forced review');}
+  pass.push('errata migration, frozen '+selection+' verdict/score, separate current key and forced review');}
  // Corporate credit 39 changes only the answer; its confirmed correction needs no warning.
  {const p=await page();const q=book.questions.find(q=>q.id==='kb-2026-v3-ch07-s00-q039'),state=engine.blank();
   const s=engine.run(state,{action:'start',mode:'free',qid:q.id});
