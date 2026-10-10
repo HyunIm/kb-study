@@ -205,3 +205,8 @@ await import('./check-errata.mjs');
  assert.equal(oldOpen,'VersionError','old build can still open and overwrite the record');
  const upgraded=new IDBFactory();await putRaw(upgraded,'2026',backup);assert.deepEqual(engine.validate(await createStore(engine,upgraded).snapshot()),backup,'version 1 database not carried over');
  console.log('PASS: database version blocks pre-errata tabs, version 1 records carried over');}
+
+// A database already upgraded by a newer build asks this tab to reload.
+{const factory=new IDBFactory();await new Promise(res=>{const o=factory.open('kb-study-local',99);o.onupgradeneeded=()=>o.result.createObjectStore('books');o.onsuccess=()=>{o.result.close();res();};});
+ await assert.rejects(()=>createStore(engine,factory).snapshot(),/새로고침/);
+ console.log('PASS: newer database version asks to reload');}

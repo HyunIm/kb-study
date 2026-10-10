@@ -46,6 +46,7 @@ try{
   pass.push('catalog paging, auto-load, length and scroll restore, search');}
  // Exam: timer ticks, leaving asks first through both the button and browser Back.
  {const p=await page();await nav(p,3);await p.getByRole('button',{name:/60분 모의고사 시작/}).click();await p.waitForURL(/session=/);
+  const grid=p.locator('.numbers button');assert.equal(await grid.first().getAttribute('aria-current'),'step');assert.equal(await grid.nth(1).getAttribute('aria-label'),'2번, 미응답');
   const t0=await p.locator('.timer').textContent();await p.waitForTimeout(2100);assert.notEqual(await p.locator('.timer').textContent(),t0,'exam timer stopped');
   await p.getByRole('button',{name:'목록으로'}).click();await p.getByRole('alertdialog').waitFor();await p.getByRole('button',{name:'계속 풀기'}).click();
   await p.goBack();await p.getByRole('alertdialog').waitFor();assert.ok(await p.locator('.timer').isVisible());
